@@ -288,7 +288,7 @@ def layout_simple(item, opts):
 
 def layout_return(item: Any, opts: Any) -> Frame:
     """Сохраняет значение возврата и передаёт выход до границы функции."""
-    if item.value and not (item.main and item.value.strip().lstrip("+-").isdigit()):
+    if item.value and not (item.main and item.value.strip() in {"0", "+0", "-0"}):
         f = layout_simple(M.Simple(M.PROCESS, "Возврат " + item.value), opts)
         point = f.exit
     else:

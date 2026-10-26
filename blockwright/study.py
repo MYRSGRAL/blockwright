@@ -436,20 +436,47 @@ class StudyBuilder(Builder):
                 stack.extend(child.named_children)
         return target, line
 
-    def _short_error(self, body: M.Seq, text: str) -> None:
-        for item in body.items:
-            if (
-                isinstance(item, M.Simple)
-                and item.kind == M.OUTPUT
-                and item.text.startswith("Вывод Ошибка:")
-            ):
-                item.text = text
+    def _short_error(self, body: M.Seq, text: str, source: Any) -> None:
+        if source is None:
+            return
+        statements = (
+            [child for child in self.named(source) if not self.spec.skipped(child)]
+            if source.type == "compound_statement"
+            else [source]
+        )
+        # Сокращаем только статическое сообщение непосредственно перед возвратом.
+        if (
+            len(statements) != 2
+            or statements[0].type != "expression_statement"
+            or statements[1].type != "return_statement"
+            or len(body.items) != 2
+            or not isinstance(body.items[0], M.Simple)
+            or body.items[0].kind != M.OUTPUT
+            or not isinstance(body.items[1], M.Return)
+        ):
+            return
+        stream = self._stream_parts(self._expr(statements[0]))
+        if stream is None or stream[0] != M.OUTPUT:
+            return
+        parts = stream[1]
+        if not any(self._string_value(part) is not None for part in parts):
+            return
+        if any(
+            self._string_value(part) is None and not self._display_manipulator(part)
+            for part in parts
+        ):
+            return
+        body.items[0].text = text
 
     def k_if(self, n: Any, r: dict) -> list[object]:
         result = super().k_if(n, r)
         finite = self._finite(n.child_by_field_name("condition"))
         if finite and finite[1]:
-            self._short_error(result[-1].then_, "Ошибка: результат не конечен")
+            self._short_error(
+                result[-1].then_,
+                "Ошибка: результат не конечен",
+                self.find(n, r.get("then")),
+            )
             if finite[0] == "sum" and self._sum_display:
                 branch = result[-1]
                 branch.cond = "Сумма конечна?"
@@ -517,7 +544,11 @@ class StudyBuilder(Builder):
                 out.append(M.Simple(M.INPUT, "Ввод " + target))
                 branch = self.stmt(nodes[index + 2])[-1]
                 branch.cond = "Ошибка ввода?"
-                self._short_error(branch.then_, "Ошибка ввода")
+                self._short_error(
+                    branch.then_,
+                    "Ошибка ввода",
+                    nodes[index + 2].child_by_field_name("consequence"),
+                )
                 out.append(branch)
                 output_values = None
                 index += 3

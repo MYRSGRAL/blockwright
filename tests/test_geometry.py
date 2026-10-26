@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from blockwright import model as M
 from blockwright.geometry import document_bottom, shape_port, validate_geometry
-from blockwright.layout import layout, layout_function, make_shape
+from blockwright.layout import Frame, layout, layout_function, make_shape
 from blockwright.pages import split_pages
 from blockwright.render import render_svg, shape_outline
 
@@ -27,6 +27,51 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_page_cut_at_edge_vertex_preserves_both_directions(self) -> None:
+        for reverse in (False, True):
+            frame = Frame()
+            frame.width, frame.height = 200, 834
+            frame.shapes = [
+                {
+                    "kind": "process",
+                    "x": 0,
+                    "y": y,
+                    "w": 100,
+                    "h": 34,
+                    "text": "шаг",
+                    "lines": ["шаг"],
+                }
+                for y in (0, 800)
+            ]
+            points = [(50, 34), (50, 504), (50, 800)]
+            frame.edges = [
+                {"points": points[::-1] if reverse else points, "arrow": True}
+            ]
+            pages = split_pages(frame, options())
+            self.assertEqual(len(pages), 2)
+            self.assertEqual(sum(len(p.shapes) for p in pages), 4)
+            for page in pages:
+                self.assertTrue(
+                    all(
+                        0 <= y <= page.height
+                        for e in page.edges
+                        for _, y in e["points"]
+                    )
+                )
+
+    def test_nonzero_main_return_is_visible(self) -> None:
+        fn = M.Function(
+            "main",
+            "main()",
+            "main",
+            "",
+            "",
+            1,
+            "cpp",
+            M.Seq([M.Return("-1", main=True)]),
+        )
+        self.assertIn("Возврат -1", render_svg(layout_function(fn, options())))
+
     def test_document_port_is_on_wave(self) -> None:
         shape = make_shape("output", "Вывод результата", options())
         x, y = shape_port(shape, "bottom")

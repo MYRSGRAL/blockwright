@@ -219,6 +219,44 @@ class StudySemantics(unittest.TestCase):
         self.assertEqual(body.items[0].text, f"{first} = 1")
         self.assertEqual(body.items[1].text, f"{second} = 2")
 
+    def test_finite_error_output_preserves_increment_and_call(self) -> None:
+        for expression in ("++counter", "report_failure()"):
+            with self.subTest(expression=expression):
+                body = chart(
+                    "int main(){double sum=0; int counter=0; if (!std::isfinite(sum)) {"
+                    'std::cout << "Ошибка:" << '
+                    + expression
+                    + "; return 1;} return 0;}"
+                )
+                branch = next(item for item in body.items if isinstance(item, M.If))
+                self.assertIn(expression, branch.then_.items[0].text)
+                self.assertEqual(branch.then_.items[-1].value, "1")
+
+    def test_input_error_output_preserves_increment_and_call(self) -> None:
+        for expression in ("++counter", "report_failure()"):
+            with self.subTest(expression=expression):
+                body = chart(
+                    "int main(){double x; char extra; int counter=0; std::string line; "
+                    "std::getline(std::cin,line); std::istringstream input(line); "
+                    "if (!(input >> x) || (input >> extra) || !std::isfinite(x)) {"
+                    'std::cout << "Ошибка:" << '
+                    + expression
+                    + "; return 1;} return 0;}"
+                )
+                branch = next(item for item in body.items if isinstance(item, M.If))
+                self.assertEqual(branch.cond, "Ошибка ввода?")
+                self.assertIn(expression, branch.then_.items[0].text)
+
+    def test_static_error_output_shortening_uses_ast_not_text_prefix(self) -> None:
+        body = chart(
+            "int main(){double sum=0; if (!std::isfinite(sum)) {"
+            'std::cout << "Сбой вычисления" << std::endl; return 1;} return 0;}'
+        )
+        branch = next(item for item in body.items if isinstance(item, M.If))
+        self.assertEqual(
+            branch.then_.items[0], M.Simple(M.OUTPUT, "Ошибка: результат не конечен")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,23 @@ from blockwright.album import JS_CORE
 
 @unittest.skipUnless(shutil.which("node"), "Для проверки JavaScript нужен Node.js")
 class EditorGeometry(unittest.TestCase):
+    def test_kind_change_normalizes_ports_without_router(self) -> None:
+        core = JS_CORE.split("/* ---------- state ----------")[0]
+        script = (
+            core
+            + """
+const m={shapes:[{id:'a',kind:'process',x:0,y:0,w:150,h:54},
+ {id:'b',kind:'process',x:250,y:100,w:150,h:54}],labels:[],edges:[
+ {id:'e',from:{id:'a',port:'right'},to:{id:'b',port:'top'},points:[[150,27],[325,27],[325,100]]}]};
+syncEdges(m,['a']);
+process.stdout.write(JSON.stringify(m.edges[0].from.port));
+"""
+        )
+        result = subprocess.run(
+            ["node"], input=script, text=True, capture_output=True, check=True
+        )
+        self.assertEqual(json.loads(result.stdout), "bottom")
+
     def evaluate(self, expression: str) -> object:
         core = JS_CORE.split("/* ---------- model: attachments")[0]
         script = core + "\nprocess.stdout.write(JSON.stringify(" + expression + "));"

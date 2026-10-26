@@ -854,6 +854,18 @@ function routeEdges(m,list,opt){
   const free=!!opt.free, depth=opt.depth||0, moved=opt.moved;
   list=list.filter(e=>e.points.length>1);
   if(!list.length)return;
+  // После смены фигуры старый порт может быть недопустим даже без libavoid.
+  for(const e of list)for(const [ref,outgoing] of [[e.from,true],[e.to,false]]){
+    if(!ref)continue;
+    const s=m.shapes.find(s=>s.id===ref.id);
+    if(!s)continue;
+    const ports=flowPorts(s,outgoing);
+    if(!ports.includes(ref.port)){
+      if(ports.length)ref.port=ports[0];
+      else if(outgoing)e.from=null;
+      else e.to=null;
+    }
+  }
   const glue=opt.fresh?[]:junctions(m,list);
   const buf=bufferFor(m,list);
   const reqs=list.map(e=>endsOf(m,e,free?'free':'keep'));

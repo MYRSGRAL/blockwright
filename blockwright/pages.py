@@ -69,7 +69,7 @@ def split_pages(frame: Frame, opts: Any) -> list[Frame]:
         current = [(points[0][0], points[0][1] - cuts[index] + 42)]
         for a, b in itertools.pairwise(points):
             boundaries = [
-                c for c in cuts[1:-1] if min(a[1], b[1]) < c < max(a[1], b[1])
+                c for c in cuts[1:-1] if (a[1] < c <= b[1]) or (b[1] < c <= a[1])
             ]
             boundaries.sort(reverse=b[1] < a[1])
             for boundary in boundaries:
