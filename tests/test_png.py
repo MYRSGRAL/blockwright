@@ -20,9 +20,23 @@ class RasterExport(unittest.TestCase):
                 '<svg xmlns="http://www.w3.org/2000/svg" width="150" height="1200"><rect width="150" height="1200" fill="white"/><rect x="10" y="1170" width="130" height="20" fill="black"/></svg>',
                 encoding="utf-8",
             )
-            self.assertTrue(
-                png.convert(str(svg), str(target), browser=png.find_browser(), scale=1)
-            )
+            run = png.subprocess.run
+            diagnostics = []
+
+            def capture(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+                kwargs["stderr"] = subprocess.PIPE
+                result = run(*args, **kwargs)
+                diagnostics.append(
+                    f"{args[0][0]}: код {result.returncode}; "
+                    + result.stderr.decode("utf-8", "replace")
+                )
+                return result
+
+            with patch.object(png.subprocess, "run", side_effect=capture):
+                success = png.convert(
+                    str(svg), str(target), browser=png.find_browser(), scale=1
+                )
+            self.assertTrue(success, "\n".join(diagnostics))
             with Image.open(target) as image:
                 self.assertEqual(image.size, (150, 1200))
                 self.assertLess(max(image.convert("RGB").getpixel((70, 1180))), 30)
