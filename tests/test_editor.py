@@ -34,7 +34,7 @@ process.stdout.write(JSON.stringify(m.edges[0].from.port));
 """
         )
         result = subprocess.run(
-            ["node"], input=script, text=True, capture_output=True, check=True
+            ["node"], input=script, encoding="utf-8", capture_output=True, check=True
         )
         self.assertEqual(json.loads(result.stdout), "bottom")
 
@@ -42,7 +42,7 @@ process.stdout.write(JSON.stringify(m.edges[0].from.port));
         core = JS_CORE.split("/* ---------- model: attachments")[0]
         script = core + "\nprocess.stdout.write(JSON.stringify(" + expression + "));"
         result = subprocess.run(
-            ["node"], input=script, text=True, capture_output=True, check=True
+            ["node"], input=script, encoding="utf-8", capture_output=True, check=True
         )
         return json.loads(result.stdout)
 

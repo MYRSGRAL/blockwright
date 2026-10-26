@@ -26,7 +26,7 @@ class Product(unittest.TestCase):
                     self.assertEqual(
                         main([str(source), "--no-ui", "-q", "-o", str(out), *flags]), 0
                     )
-                    svg = next(out.glob("*.svg")).read_text(encoding="utf-8")
+                    svg = (out / "lab2__main.svg").read_text(encoding="utf-8")
                     self.assertEqual("Ошибка" in svg, visible)
                     self.assertIn("sum", svg)
                     self.assertIn("i &lt;= 10", svg)

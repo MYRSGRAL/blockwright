@@ -96,9 +96,29 @@ class GeometryTests(unittest.TestCase):
                 decision = next(s for s in frame.shapes if s["text"] == "cin >> r")
                 start = shape_port(decision, "right")
                 edge = next(e for e in frame.edges if e["points"][0] == start)
-                self.assertEqual(len(edge["points"]), 4 if kind == "break" else 5)
-                self.assertEqual(edge["points"][1][0], edge["points"][2][0])
-                self.assertEqual(edge["points"][2][1], edge["points"][3][1])
+                # Метрики шрифта меняют число коллинеарных точек, но не поворотов.
+                points = []
+                for point in edge["points"]:
+                    if points and point == points[-1]:
+                        continue
+                    while len(points) >= 2:
+                        a, b = points[-2:]
+                        vertical = (
+                            a[0] == b[0] == point[0]
+                            and (b[1] - a[1]) * (point[1] - b[1]) >= 0
+                        )
+                        horizontal = (
+                            a[1] == b[1] == point[1]
+                            and (b[0] - a[0]) * (point[0] - b[0]) >= 0
+                        )
+                        if not (vertical or horizontal):
+                            break
+                        points.pop()
+                    points.append(point)
+                self.assertEqual(len(points), 4)
+                self.assertEqual(points[1][0], points[2][0])
+                self.assertEqual(points[2][1], points[3][1])
+                self.assertEqual(points[2][1] > points[1][1], kind == "break")
                 self.assertEqual(validate_geometry(frame), [])
                 self.assertEqual(validate_ports(frame), [])
 
