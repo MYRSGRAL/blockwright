@@ -4,6 +4,7 @@ from typing import Any
 
 from . import model as M
 from .build import Builder
+from .text import normalize
 
 _MAX_INITIALIZATIONS = 3
 _MAX_INITIALIZATION_TEXT = 80
@@ -31,6 +32,7 @@ class StudyBuilder(Builder):
 
     def build_body(self, body: Any, is_main: bool = False) -> M.Seq:
         self._shadowed = set()
+        self._macro_names = set()
         nodes = list(body) if isinstance(body, list) else [body]
         if not isinstance(body, list):
             parent = body.parent
@@ -41,6 +43,14 @@ class StudyBuilder(Builder):
             root = body
             while root.parent is not None:
                 root = root.parent
+            macro_nodes = [root]
+            while macro_nodes:
+                node = macro_nodes.pop()
+                if node.type in {"preproc_def", "preproc_function_def"}:
+                    name = self.raw(node.child_by_field_name("name"))
+                    self._macro_names.add(name)
+                    self._shadowed.add(name)
+                macro_nodes.extend(node.named_children)
             global_nodes = [root]
             while global_nodes:
                 node = global_nodes.pop()
@@ -86,7 +96,49 @@ class StudyBuilder(Builder):
                     value and value.strip().startswith("Сумма") for value in literals
                 ):
                     self._sum_display = True
+        self._cin_uses = [
+            node
+            for node in all_nodes
+            if node.type in {"identifier", "qualified_identifier"}
+            and self._name(node, "cin")
+        ]
         return super().build_body(body, is_main)
+
+    def t(self, node: Any) -> str:
+        """C-cast int отображается как целая часть с усечением к нулю."""
+        if node is None:
+            return ""
+        replacements = []
+        stack = [node]
+        while stack:
+            child = stack.pop()
+            typ = child.child_by_field_name("type")
+            value = child.child_by_field_name("value")
+            if (
+                child.type == "cast_expression"
+                and self.raw(typ) == "int"
+                and value is not None
+            ):
+                replacements.append(
+                    (
+                        child.start_byte,
+                        child.end_byte,
+                        "целая часть(" + self.t(self._unwrap(value)) + ")",
+                    )
+                )
+            else:
+                stack.extend(child.named_children)
+        if not replacements:
+            return super().t(node)
+        parts = []
+        cursor = node.start_byte
+        for start, end, text in sorted(replacements):
+            parts.append(self.src[cursor:start].decode("utf-8", "replace"))
+            parts.append(text)
+            cursor = end
+        parts.append(self.src[cursor : node.end_byte].decode("utf-8", "replace"))
+        text = normalize("".join(parts))
+        return text if self.opts.keep_std else self.strip_all(text)
 
     def make_return(self, txt: str) -> M.Return:
         return M.Return(txt, self.fn_is_main)
@@ -107,7 +159,7 @@ class StudyBuilder(Builder):
         return node
 
     def _name(self, node: Any, name: str) -> bool:
-        if node is None:
+        if node is None or name in self._macro_names:
             return False
         raw = self.raw(node)
         if raw in self.known:
@@ -373,6 +425,18 @@ class StudyBuilder(Builder):
         expr = self._expr(n)
         if self._console_setup(expr):
             return []
+        if (
+            expr is not None
+            and expr.type == "call_expression"
+            and self._name(expr.child_by_field_name("function"), "system")
+        ):
+            args = self.call_args(expr)
+            if (
+                len(args) == 1
+                and args[0].type == "string_literal"
+                and self.raw(args[0]) == '"pause"'
+            ):
+                return []
         if expr is not None:
             stream = self._stream_parts(expr)
             if (
@@ -382,6 +446,116 @@ class StudyBuilder(Builder):
             ):
                 return []
         return super().k_expression(n, r)
+
+    def _statements(self, node: Any) -> list[Any]:
+        if node is None:
+            return []
+        if node.type in {"compound_statement", "else_clause"}:
+            children = [
+                child for child in self.named(node) if not self.spec.skipped(child)
+            ]
+            if node.type == "else_clause" and len(children) == 1:
+                return self._statements(children[0])
+            return children
+        return [node]
+
+    def _static_stream_output(self, node: Any) -> str | None:
+        if node.type != "expression_statement":
+            return None
+        stream = self._stream_parts(self._expr(node))
+        if stream is None or stream[0] != M.OUTPUT:
+            return None
+        literals = []
+        for part in stream[1]:
+            value = self._string_value(part)
+            if value is not None:
+                literals.append(value)
+            elif not self._display_manipulator(part):
+                return None
+        return "".join(literals).strip() if literals else None
+
+    def _cin_call(self, node: Any, name: str) -> list[Any] | None:
+        if node.type != "expression_statement":
+            return None
+        call = self._expr(node)
+        if call is None or call.type != "call_expression":
+            return None
+        function = call.child_by_field_name("function")
+        if function is None or function.type != "field_expression":
+            return None
+        if (
+            not self._name(function.child_by_field_name("argument"), "cin")
+            or self.raw(function.child_by_field_name("field")) != name
+            or self.raw(function.child_by_field_name("operator")) != "."
+        ):
+            return None
+        return self.call_args(call)
+
+    def _retry_input(self, node: Any) -> tuple[str, str] | None:
+        condition = node.child_by_field_name("condition")
+        if self._unwrap(condition).type != "true" or len(self.named(condition)) != 1:
+            return None
+        statements = self._statements(node.child_by_field_name("body"))
+        if len(statements) != 2 or not self._prompt(statements[0]):
+            return None
+        check = statements[1]
+        if check.type != "if_statement":
+            return None
+        read_condition = check.child_by_field_name("condition")
+        if read_condition is None or len(self.named(read_condition)) != 1:
+            return None
+        read = self._stream_parts(self._unwrap(read_condition))
+        if (
+            read is None
+            or read[0] != M.INPUT
+            or len(read[1]) != 1
+            or read[1][0].type != "identifier"
+        ):
+            return None
+        success = self._statements(check.child_by_field_name("consequence"))
+        if len(success) != 1 or success[0].type != "break_statement":
+            return None
+        failure = self._statements(check.child_by_field_name("alternative"))
+        if len(failure) != 3:
+            return None
+        message = self._static_stream_output(failure[0])
+        clear = self._cin_call(failure[1], "clear")
+        ignore = self._cin_call(failure[2], "ignore")
+        if not message or clear != [] or ignore is None or len(ignore) != 2:
+            return None
+        if (
+            ignore[0].type != "number_literal"
+            or self.raw(ignore[0]) != "10000"
+            or ignore[1].type != "char_literal"
+            or self.raw(ignore[1]) != "'\\n'"
+        ):
+            return None
+        # При внешнем использовании потока сохраняем детали его состояния.
+        if any(
+            use.start_byte < node.start_byte or use.end_byte > node.end_byte
+            for use in self._cin_uses
+        ):
+            return None
+        return self.t(read[1][0]), message
+
+    def k_while(self, n: Any, r: dict) -> list[object]:
+        retry = self._retry_input(n)
+        if retry is None:
+            return super().k_while(n, r)
+        target, message = retry
+        return [
+            M.Simple(M.INPUT, "Ввод " + target),
+            M.While(
+                "Ошибка ввода?",
+                M.Seq(
+                    [
+                        M.Simple(M.OUTPUT, message),
+                        M.Simple(M.PROCESS, "Очистить ошибочный ввод"),
+                        M.Simple(M.INPUT, "Ввод " + target),
+                    ]
+                ),
+            ),
+        ]
 
     def _prompt(self, node: Any) -> bool:
         expr = self._expr(node)

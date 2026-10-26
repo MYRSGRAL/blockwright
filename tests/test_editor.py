@@ -10,6 +10,17 @@ from blockwright.album import JS_CORE
 
 @unittest.skipUnless(shutil.which("node"), "Для проверки JavaScript нужен Node.js")
 class EditorGeometry(unittest.TestCase):
+    def test_junction_arrow_matches_generator(self) -> None:
+        from blockwright.geometry import junction_arrows
+
+        edges = [
+            {"points": [(0, 0), (0, 100)], "arrow": False},
+            {"points": [(-50, 50), (0, 50)], "arrow": False},
+            {"points": [(-50, 75), (50, 75)], "arrow": False},
+        ]
+        actual = self.evaluate("junctionArrows(" + json.dumps(edges) + ")")
+        self.assertEqual(actual, json.loads(json.dumps(junction_arrows(edges))))
+
     def test_kind_change_normalizes_ports_without_router(self) -> None:
         core = JS_CORE.split("/* ---------- state ----------")[0]
         script = (

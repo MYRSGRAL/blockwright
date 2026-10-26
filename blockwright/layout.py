@@ -610,6 +610,21 @@ def _pretest_loop(header_shape, body, opts, labels, pre=None, post=None):
 
 
 def layout_while(item, opts):
+    if getattr(opts, "study", False) and item.cond.strip() in {"true", "1"}:
+        body = layout(item.body, opts)
+        f = Frame()
+        body.shift(-body.spine, TOPJOIN)
+        f.edges.append(_edge([(0.0, 0.0), (0.0, TOPJOIN)], arrow=body.entry_shape))
+        f.absorb(body)
+        has_break = any(p["kind"] == "break" for p in f.pend)
+        exit_y, _ = _close_loop(
+            f, 0, TOPJOIN + body.height, body.exit, TOPJOIN / 2, TOPJOIN
+        )
+        f.spine = 0.0
+        f.height = exit_y
+        f.exit = (0.0, exit_y) if has_break else None
+        f.entry_shape = False
+        return f.normalize()
     d = make_shape(M.DECISION, item.cond, opts)
     return _pretest_loop(d, item.body, opts, (opts.yes_label, opts.no_label))
 

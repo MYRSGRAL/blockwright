@@ -32,6 +32,50 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_downward_side_channel_has_direction_arrow(self) -> None:
+        from blockwright.render import edge_svg
+
+        svg = "".join(
+            edge_svg(
+                {"points": [(0, 0), (100, 0), (100, 100), (0, 100)], "arrow": False}
+            )
+        )
+        self.assertIn('d="M100,50 ', svg)
+
+    def test_unconditional_loop_has_no_fictitious_false_branch(self) -> None:
+        frame = layout(
+            M.While(
+                "true",
+                M.Seq(
+                    [
+                        M.Simple(M.INPUT, "Ввод r"),
+                        M.If("Принято?", M.Jump("break")),
+                    ]
+                ),
+            ),
+            options(),
+        )
+        self.assertFalse(any(s["text"] == "true" for s in frame.shapes))
+        self.assertEqual(sum(s["kind"] == M.DECISION for s in frame.shapes), 1)
+        self.assertIsNotNone(frame.exit)
+        self.assertEqual(validate_geometry(frame), [])
+        self.assertEqual(validate_ports(frame), [])
+        endless = layout(M.While("true", M.Simple(M.PROCESS, "работа")), options())
+        self.assertIsNone(endless.exit)
+
+    def test_junction_arrows_precede_merges_and_ignore_crossings(self) -> None:
+        from blockwright.geometry import junction_arrows
+
+        edges = [
+            {"points": [(0, 0), (0, 100)], "arrow": False},
+            {"points": [(-50, 50), (0, 50)], "arrow": False},
+            {"points": [(-50, 75), (50, 75)], "arrow": False},
+        ]
+        self.assertEqual(
+            junction_arrows(edges),
+            [{"points": [(-13.0, 50.0), (-3.0, 50.0)], "arrow": True}],
+        )
+
     def test_direct_break_leaves_decision_without_staircase(self) -> None:
         for kind in ("break", "continue"):
             with self.subTest(kind=kind):

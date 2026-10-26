@@ -1,11 +1,81 @@
 """Общие контуры, порты и проверки геометрии учебных схем."""
 
 from collections import defaultdict
-from math import floor
+from math import floor, hypot
 from typing import Any
 
 Shape = dict[str, Any]
 Point = tuple[float, float]
+
+
+def junction_arrows(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Стрелки перед Т-образными слияниями; пересечение без конца ребра не соединяет линии."""
+    grid: dict[tuple[int, int], list[tuple[int, Point, Point]]] = defaultdict(list)
+    cell = 128
+    for index, edge in enumerate(edges):
+        for a, b in zip(edge["points"], edge["points"][1:]):
+            for x in range(
+                floor(min(a[0], b[0]) / cell), floor(max(a[0], b[0]) / cell) + 1
+            ):
+                for y in range(
+                    floor(min(a[1], b[1]) / cell), floor(max(a[1], b[1]) / cell) + 1
+                ):
+                    grid[x, y].append((index, a, b))
+    arrows = []
+    for index, edge in enumerate(edges):
+        points = edge["points"]
+        if edge.get("arrow", True) or len(points) < 2:
+            continue
+        p = points[-1]
+        a = next(
+            (
+                q
+                for q in reversed(points[:-1])
+                if hypot(q[0] - p[0], q[1] - p[1]) > 0.01
+            ),
+            p,
+        )
+        length = hypot(p[0] - a[0], p[1] - a[1])
+        if length < 6:
+            continue
+        ux, uy = (p[0] - a[0]) / length, (p[1] - a[1]) / length
+        rays = {(round(-ux, 6), round(-uy, 6))}
+        for other, start, end in grid[floor(p[0] / cell), floor(p[1] / cell)]:
+            if other == index:
+                continue
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            span = hypot(dx, dy)
+            if (
+                not span
+                or abs((p[0] - start[0]) * dy - (p[1] - start[1]) * dx) > 0.01 * span
+            ):
+                continue
+            if not (
+                min(start[0], end[0]) - 0.01 <= p[0] <= max(start[0], end[0]) + 0.01
+                and min(start[1], end[1]) - 0.01 <= p[1] <= max(start[1], end[1]) + 0.01
+            ):
+                continue
+            for q in (start, end):
+                distance = hypot(q[0] - p[0], q[1] - p[1])
+                if distance > 0.01:
+                    rays.add(
+                        (
+                            round((q[0] - p[0]) / distance, 6),
+                            round((q[1] - p[1]) / distance, 6),
+                        )
+                    )
+        if len(rays) >= 3:
+            stub = min(10.0, length - 3.0)
+            arrows.append(
+                {
+                    "points": [
+                        (p[0] - ux * (stub + 3), p[1] - uy * (stub + 3)),
+                        (p[0] - ux * 3, p[1] - uy * 3),
+                    ],
+                    "arrow": True,
+                }
+            )
+    return arrows
 
 
 def allowed_ports(shape: Shape, outgoing: bool) -> tuple[str, ...]:

@@ -33,7 +33,133 @@ def chart(code: str, study: bool = True) -> M.Seq:
     return project.charts(source, options(study), known)[0].body
 
 
+_RETRY_INPUT = r"""while (true) {
+    cout << "Введите число: ";
+    if (cin >> r) {
+        break;
+    } else {
+        cout << "Это не число." << endl;
+        cin.clear();
+        cin.ignore(10000, '\n');
+    }
+}"""
+
+
 class StudySemantics(unittest.TestCase):
+    def test_macro_names_disable_environment_and_retry_shortening(self) -> None:
+        for define, call in (
+            ("#define system(x) report(x)", 'system("pause")'),
+            ("#define system report", 'std::system("pause")'),
+            ("#define SetConsoleCP(x) report(x)", "SetConsoleCP(CP_UTF8)"),
+        ):
+            with self.subTest(define=define):
+                body = chart(define + f"\nint main(){{{call}; return 0;}}")
+                self.assertEqual(len(body.items), 2)
+        for name in ("cin", "cout"):
+            body = chart(
+                f"#define {name} instrumented\nint main(){{double r;"
+                + _RETRY_INPUT
+                + "return 0;}"
+            )
+            self.assertEqual(body.items[0].cond, "true")
+
+    def test_appendix_retry_input_becomes_one_error_check_and_retry(self) -> None:
+        code = (
+            "int main(){SetConsoleOutputCP(CP_UTF8); SetConsoleCP(CP_UTF8); "
+            "double r; const double pi = 3.1415; "
+            + _RETRY_INPUT
+            + " double P = 2 * pi * r; double S = pi * r * r; "
+            "P = (int)(P * 10 + 0.5) / 10.0; S = (int)(S * 10 + 0.5) / 10.0; "
+            'cout << "Периметр круга: " << P << endl; '
+            'cout << "Площадь круга: " << S << endl; system("pause"); return 0;}'
+        )
+        body = chart(code)
+        self.assertEqual(body.items[1], M.Simple(M.INPUT, "Ввод r"))
+        loop = body.items[2]
+        self.assertIsInstance(loop, M.While)
+        self.assertEqual(loop.cond, "Ошибка ввода?")
+        self.assertEqual(
+            loop.body.items,
+            [
+                M.Simple(M.OUTPUT, "Это не число."),
+                M.Simple(M.PROCESS, "Очистить ошибочный ввод"),
+                M.Simple(M.INPUT, "Ввод r"),
+            ],
+        )
+        texts = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
+        self.assertNotIn("pause", texts)
+        self.assertIn("P = целая часть(P * 10 + 0.5) / 10.0", texts)
+        self.assertIn("S = целая часть(S * 10 + 0.5) / 10.0", texts)
+
+    def test_retry_input_falls_back_for_effects_flags_and_other_cleanup(self) -> None:
+        alternatives = [
+            _RETRY_INPUT.replace("break;", "saved(); break;"),
+            _RETRY_INPUT.replace("cin.clear();", "saved(); cin.clear();"),
+            _RETRY_INPUT.replace("cin.clear();", "cin.clear(state);"),
+            _RETRY_INPUT.replace("10000", "limit()"),
+            _RETRY_INPUT.replace("'\\n'", "'x'"),
+            _RETRY_INPUT.replace("cin >> r", "(cin >> r) && ready()"),
+            _RETRY_INPUT.replace('"Это не число."', '"Это не число." << ++counter'),
+            _RETRY_INPUT.replace('"Введите число: "', '"Введите число: " << prompt()'),
+            _RETRY_INPUT.replace('"Введите число: "', '"Контрольное сообщение"'),
+            _RETRY_INPUT.replace("cin >> r", "int status=setup(); cin >> r"),
+            _RETRY_INPUT + " if(cin.eof()) inspect();",
+            "Stream cin; " + _RETRY_INPUT,
+        ]
+        for snippet in alternatives:
+            with self.subTest(snippet=snippet):
+                body = chart("int main(){double r;" + snippet + "return 0;}")
+                loop = next(item for item in body.items if isinstance(item, M.While))
+                self.assertEqual(loop.cond, "true")
+                self.assertTrue(any(isinstance(item, M.If) for item in loop.body.items))
+
+    def test_retry_input_pause_and_cast_stay_detailed_in_full_mode(self) -> None:
+        body = chart(
+            "int main(){double r; "
+            + _RETRY_INPUT
+            + 'r = (int)(r * 10 + 0.5) / 10.0; system("pause"); return 0;}',
+            study=False,
+        )
+        loop = next(item for item in body.items if isinstance(item, M.While))
+        self.assertEqual(loop.cond, "true")
+        self.assertEqual(loop.body.items[1].then_.items, [M.Jump("break")])
+        texts = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
+        self.assertIn("(int)(r * 10 + 0.5)", texts)
+        self.assertIn('system("pause")', texts)
+
+    def test_only_standalone_unshadowed_literal_pause_is_hidden(self) -> None:
+        self.assertEqual(
+            chart('int main(){system("pause"); std::system("pause"); return 0;}').items,
+            [M.Return("0", True)],
+        )
+        cases = [
+            'int main(){system("pause & other"); return 0;}',
+            "int main(){system(command); return 0;}",
+            'int main(){if(system("pause")) inspect(); return 0;}',
+            'int main(){int status=system("pause"); return 0;}',
+            'int main(){custom::system("pause"); return 0;}',
+            'int main(){Callable system; system("pause"); return 0;}',
+        ]
+        for code in cases:
+            with self.subTest(code=code):
+                body = chart(code)
+                self.assertGreater(len(body.items), 1)
+        body = chart('int system(const char*); int main(){system("pause"); return 0;}')
+        self.assertIn('system("pause")', body.items[0].text)
+
+    def test_int_cast_label_keeps_truncation_and_operand_effects(self) -> None:
+        body = chart(
+            "int main(){x = (int)(-1.8) / 10.0; y = (int)next(); z = (long)next(); return 0;}"
+        )
+        self.assertEqual(body.items[0].text, "x = целая часть(-1.8) / 10.0")
+        self.assertEqual(body.items[1].text, "y = целая часть(next())")
+        self.assertEqual(body.items[2].text, "z = (long)next()")
+        body = chart(
+            'int main(){x = (int)((int)next()); std::cout << "(int)"; return 0;}'
+        )
+        self.assertEqual(body.items[0].text, "x = целая часть(целая часть(next()))")
+        self.assertEqual(body.items[1].text, "Вывод (int)")
+
     def test_console_setup_is_hidden_only_in_study_mode(self) -> None:
         calls = [
             "SetConsoleOutputCP(CP_UTF8)",
@@ -62,7 +188,7 @@ class StudySemantics(unittest.TestCase):
             "std::ios::sync_with_stdio(flag())",
             "std::cin.tie(get_stream())",
             "custom::SetConsoleCP(CP_UTF8)",
-            'system("pause")',
+            'system("other")',
         ):
             with self.subTest(call=call):
                 body = chart(f"int main(){{{call}; return 0;}}")

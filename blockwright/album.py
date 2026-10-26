@@ -470,6 +470,8 @@ function edgeSvg(e){
   const out=[];
   for(let i=1;i<pts.length;i++){
     const [ax,ay]=pts[i-1],[bx,by]=pts[i];
+    if(i>1&&by-ay>60&&Math.abs(ax-bx)<.01){const my=(ay+by)/2;
+      out.push(`<path d="M${n(ax)},${n(my)} L${n(ax-ARROW_HALF)},${n(my-ARROW_LEN)} L${n(ax+ARROW_HALF)},${n(my-ARROW_LEN)} Z" fill="${TH().stroke}"/>`);}
     if(ay-by>35&&Math.abs(ax-bx)<.01){const my=(ay+by)/2;
       out.push(`<path d="M${n(ax)},${n(my)} L${n(ax-ARROW_HALF)},${n(my+ARROW_LEN)} L${n(ax+ARROW_HALF)},${n(my+ARROW_LEN)} Z" fill="${TH().stroke}"/>`);}
     if(ax-bx>35&&Math.abs(ay-by)<.01){const mx=(ax+bx)/2;
@@ -485,6 +487,38 @@ function edgeSvg(e){
   }
   out.unshift(`<path d="${roundPath(pts,CORNER)}" fill="none" stroke="${TH().stroke}" stroke-width="1.5" stroke-linecap="round"/>`);
   return out;
+}
+function junctionArrows(edges){
+  const grid=new Map(),cell=128,key=(x,y)=>x+','+y;
+  edges.forEach((e,index)=>{
+    for(let i=1;i<e.points.length;i++){
+      const a=e.points[i-1],b=e.points[i];
+      for(let x=Math.floor(Math.min(a[0],b[0])/cell);x<=Math.floor(Math.max(a[0],b[0])/cell);x++)
+        for(let y=Math.floor(Math.min(a[1],b[1])/cell);y<=Math.floor(Math.max(a[1],b[1])/cell);y++){
+          const k=key(x,y);if(!grid.has(k))grid.set(k,[]);grid.get(k).push([index,a,b]);
+        }
+    }
+  });
+  const arrows=[],ray=(x,y)=>Math.round(x*1e6)+','+Math.round(y*1e6);
+  edges.forEach((e,index)=>{
+    if(e.arrow!==false||e.points.length<2)return;
+    const p=e.points[e.points.length-1];
+    const a=e.points.slice(0,-1).reverse().find(q=>Math.hypot(q[0]-p[0],q[1]-p[1])>.01)||p;
+    const length=Math.hypot(p[0]-a[0],p[1]-a[1]);if(length<6)return;
+    const ux=(p[0]-a[0])/length,uy=(p[1]-a[1])/length,rays=new Set([ray(-ux,-uy)]);
+    for(const[other,start,end]of grid.get(key(Math.floor(p[0]/cell),Math.floor(p[1]/cell)))||[]){
+      if(other===index)continue;
+      const dx=end[0]-start[0],dy=end[1]-start[1],span=Math.hypot(dx,dy);
+      if(!span||Math.abs((p[0]-start[0])*dy-(p[1]-start[1])*dx)>.01*span)continue;
+      if(p[0]<Math.min(start[0],end[0])-.01||p[0]>Math.max(start[0],end[0])+.01||
+         p[1]<Math.min(start[1],end[1])-.01||p[1]>Math.max(start[1],end[1])+.01)continue;
+      for(const q of[start,end]){const distance=Math.hypot(q[0]-p[0],q[1]-p[1]);
+        if(distance>.01)rays.add(ray((q[0]-p[0])/distance,(q[1]-p[1])/distance));}
+    }
+    if(rays.size>=3){const stub=Math.min(10,length-3);
+      arrows.push({points:[[p[0]-ux*(stub+3),p[1]-uy*(stub+3)],[p[0]-ux*3,p[1]-uy*3]],arrow:true});}
+  });
+  return arrows;
 }
 function labelSvg(l){
   return `<text x="${n(l.x)}" y="${n(l.y)}" text-anchor="${l.anchor}" font-family="${UI}" font-size="${LBL}" fill="${TH().ink}">${esc(l.text)}</text>`;
@@ -504,6 +538,7 @@ function renderSVG(m,opt){
     if(opt.interactive&&e.points.length>1)
       hits.push(`<polyline class="edge-hit" data-edge="${esc(e.id)}" points="${e.points.map(p=>n(p[0])+','+n(p[1])).join(' ')}"/>`);
   }
+  for(const e of junctionArrows(m.edges))lines.push(...edgeSvg(e));
   const labels=m.labels.map(l=>opt.interactive
     ?`<g data-label="${esc(l.id)}" style="cursor:move">${labelSvg(l)}</g>`:labelSvg(l));
   const shapes=m.shapes.map((s,i)=>{

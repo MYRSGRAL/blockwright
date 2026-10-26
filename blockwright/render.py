@@ -13,6 +13,7 @@ import math
 import re
 
 from . import model as M
+from .geometry import junction_arrows
 from .layout import FONT_SIZE, LABEL_SIZE, LINE_H
 from .text import FONT_MONO, FONT_UI, wrap_text, xml_escape
 
@@ -213,7 +214,13 @@ def edge_svg(e):
     if len(pts) < 2:
         return []
     out = []
-    for (ax, ay), (bx, by) in itertools.pairwise(pts):
+    for index, ((ax, ay), (bx, by)) in enumerate(itertools.pairwise(pts)):
+        if index > 0 and by - ay > 60 and abs(ax - bx) < 0.01:
+            my = (ay + by) / 2
+            out.append(
+                f'<path d="M{n(ax)},{n(my)} L{n(ax - ARROW_HALF)},{n(my - ARROW_LEN)} '
+                f'L{n(ax + ARROW_HALF)},{n(my - ARROW_LEN)} Z" fill="{LINE}"/>'
+            )
         if ay - by > 35 and abs(ax - bx) < 0.01:
             my = (ay + by) / 2
             out.append(
@@ -283,6 +290,8 @@ def render_svg(frame, title=None, standalone=True, name="Блок-схема", t
     lines = []
     for e in frame.edges:
         lines.extend(edge_svg(e))
+    for arrow in junction_arrows(frame.edges):
+        lines.extend(edge_svg(arrow))
     labels = [label_svg(l) for l in frame.labels]
     shapes = [
         _shape_group(s) for s in sorted(frame.shapes, key=lambda s: (s["y"], s["x"]))
