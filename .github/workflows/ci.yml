@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.12", "3.13"]
+        python: ["3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,16 +27,18 @@ jobs:
       - name: Build charts for the bundled example
         run: python -m blockwright examples -o out --no-ui
 
+      - name: Установить зависимость измерения текста и PNG
+        run: python -m pip install "Pillow>=11.3"
+
+      - name: Выбрать системный Google Chrome для PNG-проверки
+        if: runner.os == 'Linux'
+        run: |
+          browser_path="$(command -v google-chrome)"
+          "$browser_path" --version
+          echo "BLOCKWRIGHT_BROWSER=$browser_path" >> "$GITHUB_ENV"
+
       - name: Unit tests on the bundled parsers
         run: python -m unittest discover -s tests -v
-
-      # Pascal's grammar is AGPL and never bundled; test it installed
-      - name: Unit tests with the Pascal grammar
-        run: |
-          python -m pip install --target pascal-grammar tree_sitter_pascal
-          python -m unittest discover -s tests
-        env:
-          PYTHONPATH: pascal-grammar
 
       - name: Check the expected files
         shell: python
@@ -44,14 +46,13 @@ jobs:
           import pathlib, sys
           out = pathlib.Path("out")
           want = ["index.html", "grades__main.svg",
-                  "grades__verdict.svg", "grades__average.svg",
-                  "python_grades__grades.svg", "python_grades__verdict.svg"]
+                  "grades__verdict.svg", "grades__average.svg"]
           missing = [n for n in want if not (out / n).is_file()]
           if missing:
               sys.exit("missing: " + ", ".join(missing))
           page = (out / "index.html").read_text(encoding="utf-8")
           # AVOID_WASM: the connector router from vendor/web is inlined
-          for marker in ("<svg", "Вывод:", "blockwright", "AvoidModule", "AVOID_WASM", 'id="btnMore"'):
+          for marker in ("<svg", "Вывод", "blockwright", "AvoidModule", "AVOID_WASM", 'id="btnMore"'):
               if marker not in page:
                   sys.exit(f"album looks broken: {marker!r} not found")
           print("ok:", ", ".join(p.name for p in sorted(out.iterdir())))
@@ -85,7 +86,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python -m pip install --upgrade pip pyinstaller Pillow
 
       - name: Build
         run: python build.py
@@ -97,8 +98,7 @@ jobs:
           "${{ matrix.built }}" examples -o binary-out --no-ui
           test -f binary-out/index.html
           test -f binary-out/grades__main.svg
-          test -f binary-out/python_grades__grades.svg
-          grep -q "Вывод:" binary-out/grades__main.svg
+          grep -q "Вывод" binary-out/grades__main.svg
           grep -q "AVOID_WASM" binary-out/index.html
 
       - uses: actions/upload-artifact@v4

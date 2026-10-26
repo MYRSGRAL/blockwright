@@ -1,0 +1,318 @@
+"""Проверки учебной геометрии и разрывов страниц."""
+
+import unittest
+from types import SimpleNamespace
+
+from blockwright import model as M
+from blockwright.geometry import (
+    document_bottom,
+    shape_port,
+    validate_geometry,
+    validate_ports,
+)
+from blockwright.layout import Frame, layout, layout_function, make_shape
+from blockwright.pages import split_pages
+from blockwright.render import render_svg, shape_outline
+
+
+def options(**changes: object) -> SimpleNamespace:
+    values = {
+        "max_chars": 30,
+        "study": True,
+        "notation": "course",
+        "yes_label": "Да",
+        "no_label": "Нет",
+        "begin_label": "Начало",
+        "end_label": "Конец",
+        "plain_begin": True,
+        "page_height": 600,
+    }
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+class GeometryTests(unittest.TestCase):
+    def test_downward_side_channel_has_direction_arrow(self) -> None:
+        from blockwright.render import edge_svg
+
+        svg = "".join(
+            edge_svg(
+                {"points": [(0, 0), (100, 0), (100, 100), (0, 100)], "arrow": False}
+            )
+        )
+        self.assertIn('d="M100,50 ', svg)
+
+    def test_unconditional_loop_has_no_fictitious_false_branch(self) -> None:
+        frame = layout(
+            M.While(
+                "true",
+                M.Seq(
+                    [
+                        M.Simple(M.INPUT, "Ввод r"),
+                        M.If("Принято?", M.Jump("break")),
+                    ]
+                ),
+            ),
+            options(),
+        )
+        self.assertFalse(any(s["text"] == "true" for s in frame.shapes))
+        self.assertEqual(sum(s["kind"] == M.DECISION for s in frame.shapes), 1)
+        self.assertIsNotNone(frame.exit)
+        self.assertEqual(validate_geometry(frame), [])
+        self.assertEqual(validate_ports(frame), [])
+        endless = layout(M.While("true", M.Simple(M.PROCESS, "работа")), options())
+        self.assertIsNone(endless.exit)
+
+    def test_junction_arrows_precede_merges_and_ignore_crossings(self) -> None:
+        from blockwright.geometry import junction_arrows
+
+        edges = [
+            {"points": [(0, 0), (0, 100)], "arrow": False},
+            {"points": [(-50, 50), (0, 50)], "arrow": False},
+            {"points": [(-50, 75), (50, 75)], "arrow": False},
+        ]
+        self.assertEqual(
+            junction_arrows(edges),
+            [{"points": [(-13.0, 50.0), (-3.0, 50.0)], "arrow": True}],
+        )
+
+    def test_direct_break_leaves_decision_without_staircase(self) -> None:
+        for kind in ("break", "continue"):
+            with self.subTest(kind=kind):
+                frame = layout(
+                    M.While(
+                        "true",
+                        M.Seq(
+                            [
+                                M.Simple(M.OUTPUT, "Введите число:"),
+                                M.If("cin >> r", M.Jump(kind)),
+                                M.Simple(M.PROCESS, "cin.clear()"),
+                                M.Simple(M.PROCESS, "cin.ignore(10000, '\\n')"),
+                            ]
+                        ),
+                    ),
+                    options(),
+                )
+                decision = next(s for s in frame.shapes if s["text"] == "cin >> r")
+                start = shape_port(decision, "right")
+                edge = next(e for e in frame.edges if e["points"][0] == start)
+                # Метрики шрифта меняют число коллинеарных точек, но не поворотов.
+                points = []
+                for point in edge["points"]:
+                    if points and point == points[-1]:
+                        continue
+                    while len(points) >= 2:
+                        a, b = points[-2:]
+                        vertical = (
+                            a[0] == b[0] == point[0]
+                            and (b[1] - a[1]) * (point[1] - b[1]) >= 0
+                        )
+                        horizontal = (
+                            a[1] == b[1] == point[1]
+                            and (b[0] - a[0]) * (point[0] - b[0]) >= 0
+                        )
+                        if not (vertical or horizontal):
+                            break
+                        points.pop()
+                    points.append(point)
+                self.assertEqual(len(points), 4)
+                self.assertEqual(points[1][0], points[2][0])
+                self.assertEqual(points[2][1], points[3][1])
+                self.assertEqual(points[2][1] > points[1][1], kind == "break")
+                self.assertEqual(validate_geometry(frame), [])
+                self.assertEqual(validate_ports(frame), [])
+
+    def test_page_cut_at_edge_vertex_preserves_both_directions(self) -> None:
+        for reverse in (False, True):
+            frame = Frame()
+            frame.width, frame.height = 200, 834
+            frame.shapes = [
+                {
+                    "kind": "process",
+                    "x": 0,
+                    "y": y,
+                    "w": 100,
+                    "h": 34,
+                    "text": "шаг",
+                    "lines": ["шаг"],
+                }
+                for y in (0, 800)
+            ]
+            points = [(50, 34), (50, 504), (50, 800)]
+            frame.edges = [
+                {"points": points[::-1] if reverse else points, "arrow": True}
+            ]
+            pages = split_pages(frame, options())
+            self.assertEqual(len(pages), 2)
+            self.assertEqual(sum(len(p.shapes) for p in pages), 4)
+            for page in pages:
+                self.assertTrue(
+                    all(
+                        0 <= y <= page.height
+                        for e in page.edges
+                        for _, y in e["points"]
+                    )
+                )
+
+    def test_nonzero_main_return_is_visible(self) -> None:
+        fn = M.Function(
+            "main",
+            "main()",
+            "main",
+            "",
+            "",
+            1,
+            "cpp",
+            M.Seq([M.Return("-1", main=True)]),
+        )
+        self.assertIn("Возврат -1", render_svg(layout_function(fn, options())))
+
+    def test_document_port_is_on_wave(self) -> None:
+        shape = make_shape("output", "Вывод результата", options())
+        x, y = shape_port(shape, "bottom")
+        self.assertAlmostEqual(x, shape["w"] / 2)
+        self.assertAlmostEqual(y, document_bottom(shape["w"], shape["h"], 0.5)[1])
+        self.assertNotEqual(y, shape["h"])
+        self.assertIn(" C", "".join(shape_outline(shape)))
+        gost = make_shape("output", "Вывод", options(notation="gost"))
+        self.assertIn("polygon", "".join(shape_outline(gost)))
+
+    def test_decision_ports_are_down_and_right(self) -> None:
+        frame = layout(M.If("условие?", M.Simple(M.PROCESS, "работа")), options())
+        decision = next(s for s in frame.shapes if s["kind"] == M.DECISION)
+        outgoing = [e["points"][0] for e in frame.edges]
+        self.assertIn(shape_port(decision, "bottom"), outgoing)
+        self.assertIn(shape_port(decision, "right"), outgoing)
+        self.assertNotIn(shape_port(decision, "left"), outgoing)
+        self.assertEqual(validate_geometry(frame), [])
+
+    def test_return_inside_loop_reaches_common_end(self) -> None:
+        body = M.Seq(
+            [
+                M.While("ещё?", M.If("готово?", M.Return("f()"))),
+                M.Return("0", main=True),
+            ]
+        )
+        fn = M.Function("main", "main()", "main", "", "", 1, "cpp", body)
+        frame = layout_function(fn, options())
+        self.assertEqual(sum(s["text"] == "Конец" for s in frame.shapes), 1)
+        self.assertTrue(any("f()" in s["text"] for s in frame.shapes))
+        self.assertEqual(frame.pend, [])
+        self.assertTrue(any(e.get("return_value") == "0" for e in frame.edges))
+        self.assertEqual(validate_geometry(frame), [])
+
+    def test_monochrome_and_serif(self) -> None:
+        frame = layout(M.Simple(M.PROCESS, "Текст"), options())
+        svg = render_svg(frame, theme="dark")
+        self.assertIn("Times New Roman", svg)
+        self.assertNotIn("#11161d", svg)
+        self.assertIn('fill="#ffffff"', svg)
+
+    def test_pages_keep_all_shapes_and_paired_connectors(self) -> None:
+        frame = layout(
+            M.Seq([M.Simple(M.PROCESS, f"шаг {i}") for i in range(25)]), options()
+        )
+        pages = split_pages(frame, options())
+        self.assertGreater(len(pages), 1)
+        shapes = [s for p in pages for s in p.shapes]
+        self.assertEqual(sum(s["kind"] == M.PROCESS for s in shapes), 25)
+        connectors = [s["text"] for s in shapes if s["kind"] == M.CONNECTOR]
+        self.assertTrue(connectors)
+        for label in set(connectors):
+            self.assertEqual(connectors.count(label), 2)
+        self.assertTrue(all(p.height <= 600 for p in pages))
+
+    def test_loop_merges_have_one_final_arrow(self) -> None:
+        body = M.ForLoop(
+            M.If("пропустить?", M.Jump("continue")),
+            init=M.Simple(M.PROCESS, "i = 0"),
+            cond="i < 5",
+            update=M.Simple(M.PROCESS, "i = i + 1"),
+        )
+        fn = M.Function("f", "f()", "f", "", "", 1, "cpp", M.Seq([body]))
+        frame = layout_function(fn, options())
+        targets = [tuple(e["points"][-1]) for e in frame.edges if e["arrow"]]
+        self.assertEqual(len(targets), len(set(targets)))
+        self.assertEqual(validate_geometry(frame), [])
+
+    def test_throw_is_separate_from_normal_end(self) -> None:
+        body = M.Seq(
+            [
+                M.If("ошибка?", M.Simple(M.TERMINATOR, "throw error", terminal=True)),
+                M.Return("result"),
+            ]
+        )
+        frame = layout_function(
+            M.Function("f", "f()", "f", "", "", 1, "cpp", body), options()
+        )
+        thrown = next(s for s in frame.shapes if s["text"] == "throw error")
+        self.assertFalse(
+            any(e["points"][0] == shape_port(thrown, "bottom") for e in frame.edges)
+        )
+        self.assertEqual(sum(s["text"] == "Конец" for s in frame.shapes), 1)
+
+    def test_upward_page_crossings_are_paired(self) -> None:
+        frame = layout(
+            M.Seq([M.Simple(M.PROCESS, f"шаг {i}") for i in range(35)]), options()
+        )
+        frame.edges.append(
+            {
+                "points": [(frame.width + 30, frame.height), (frame.width + 30, 0)],
+                "arrow": True,
+            }
+        )
+        pages = split_pages(frame, options())
+        labels = [
+            s["text"] for page in pages for s in page.shapes if s["kind"] == M.CONNECTOR
+        ]
+        self.assertTrue(all(labels.count(label) == 2 for label in set(labels)))
+        self.assertTrue(all(validate_geometry(page) == [] for page in pages))
+        self.assertTrue(all(page.page_number == i for i, page in enumerate(pages, 1)))
+
+    def test_page_height_zero_disables_pagination(self) -> None:
+        frame = layout(M.Seq([M.Simple(M.PROCESS, "работа")] * 50), options())
+        pages = split_pages(frame, options(page_height=0))
+        self.assertEqual(len(pages), 1)
+        self.assertIsNot(pages[0], frame)
+        with self.assertRaisesRegex(ValueError, "отрицательной"):
+            split_pages(frame, options(page_height=-1))
+
+    def test_returns_leave_wave_vertically_and_success_stays_on_spine(self) -> None:
+        body = M.Seq(
+            [
+                M.If(
+                    "ошибка?",
+                    M.Seq([M.Simple(M.OUTPUT, "Ошибка"), M.Return("1", main=True)]),
+                ),
+                M.Simple(M.OUTPUT, "Результат"),
+                M.Return("0", main=True),
+            ]
+        )
+        frame = layout_function(
+            M.Function("main", "main()", "main", "", "", 1, "cpp", body), options()
+        )
+        for shape in [s for s in frame.shapes if s["kind"] == M.OUTPUT]:
+            origin = shape_port(shape, "bottom")
+            edges = [e for e in frame.edges if e["points"][0] == origin]
+            self.assertEqual(len(edges), 1)
+            points = edges[0]["points"]
+            self.assertEqual(points[0][0], points[1][0])
+            self.assertGreaterEqual(points[1][1] - points[0][1], 16)
+        success = next(e for e in frame.edges if e.get("return_value") == "0")
+        self.assertTrue(all(x == frame.spine for x, _ in success["points"]))
+
+    def test_editor_metadata_and_left_direction_arrow(self) -> None:
+        from blockwright.render import edge_svg, frame_to_dict
+
+        frame = layout(M.Simple(M.CONNECTOR, "A1"), options())
+        frame.shapes[0]["page_target"] = 2
+        frame.edges.append(
+            {"points": [(100, 100), (0, 100)], "arrow": False, "return_value": "1"}
+        )
+        frame.page_number, frame.page_count = 1, 2
+        data = frame_to_dict(frame, options())
+        self.assertEqual(data["edges"][0]["return_value"], "1")
+        self.assertEqual(data["shapes"][0]["page_target"], 2)
+        self.assertEqual(data["shapes"][0]["lines"], ["A1"])
+        self.assertEqual(data["page_count"], 2)
+        self.assertTrue(any(' Z"' in item for item in edge_svg(frame.edges[0])))

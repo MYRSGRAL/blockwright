@@ -2,7 +2,6 @@
 and the tests."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from . import model as M
 from . import parse as P
@@ -13,19 +12,19 @@ from .build import Builder
 class Source:
     path: str
     src: bytes
-    spec: object                 # langs.Spec the file was parsed with
-    tree: object = None          # None when the grammar is not installed
+    spec: object  # langs.Spec the file was parsed with
+    tree: object = None  # None when the grammar is not installed
     errors: int = 0
     known: set = field(default_factory=set)
 
 
 @dataclass
 class Chart:
-    info: dict                   # name, base, signature, short, line, main
+    info: dict  # name, base, signature, short, line, main
     body: M.Seq
 
 
-def load(path, only=None) -> Optional[Source]:
+def load(path, only=None) -> Source | None:
     """Read and parse one file; None if it is unreadable or no language fits."""
     with open(path, "rb") as fh:
         src = fh.read()
@@ -61,14 +60,25 @@ def _does_work(item):
     if isinstance(item, M.Simple):
         return item.kind == M.IO
     if isinstance(item, M.If):
-        return _does_work(item.then_) or (item.else_ is not None and _does_work(item.else_))
+        return _does_work(item.then_) or (
+            item.else_ is not None and _does_work(item.else_)
+        )
     return not isinstance(item, M.Jump)
 
 
-def charts(source: Source, opts, known, infos=None) -> List[Chart]:
-    builder = Builder(source.src, opts, known, source.spec)
+def charts(source: Source, opts, known, infos=None) -> list[Chart]:
+    if source.errors:
+        raise ValueError(
+            f"{source.path}: ошибок синтаксиса: {source.errors}; схема не построена"
+        )
+    builder_type = Builder
+    if getattr(opts, "study", True) and source.spec.name == "cpp":
+        from .study import StudyBuilder
+
+        builder_type = StudyBuilder
+    builder = builder_type(source.src, opts, known, source.spec)
     out = []
-    for info in (outline(source) if infos is None else infos):
+    for info in outline(source) if infos is None else infos:
         body = builder.build_body(info["body"], is_main=info["main"])
         if info.get("program") and not _does_work(body):
             continue

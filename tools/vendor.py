@@ -38,7 +38,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+PYTHONS = ["3.12", "3.13", "3.14"]
 # Only the two common platforms are bundled to keep vendor/ small; ARM users
 # take a release binary or install the parsers with pip.
 TARGETS = {
@@ -75,9 +75,21 @@ def grammars():
 
 
 def download(pkgs, dest, py, platform_tag):
-    cmd = [sys.executable, "-m", "pip", "download", *pkgs, "-d", dest,
-           "--only-binary=:all:", "--python-version", py,
-           "--platform", platform_tag, "-q"]
+    cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "download",
+        *pkgs,
+        "-d",
+        dest,
+        "--only-binary=:all:",
+        "--python-version",
+        py,
+        "--platform",
+        platform_tag,
+        "-q",
+    ]
     return subprocess.call(cmd) == 0
 
 
@@ -85,7 +97,7 @@ def extract(whl, dest, keep):
     with zipfile.ZipFile(whl) as z:
         for name in z.namelist():
             top = name.split("/")[0]
-            if top.endswith(".dist-info") or top.endswith(".data") or top not in keep:
+            if top.endswith((".dist-info", ".data")) or top not in keep:
                 continue
             z.extract(name, dest)
 
@@ -94,8 +106,11 @@ def add_grammars(out, pip_tag, missing_only=False):
     """Unpack the grammars into <out>/common, replacing older copies."""
     gram = grammars()
     if missing_only:
-        gram = {m: p for m, p in gram.items()
-                if not os.path.isdir(os.path.join(out, "common", m))}
+        gram = {
+            m: p
+            for m, p in gram.items()
+            if not os.path.isdir(os.path.join(out, "common", m))
+        }
     with tempfile.TemporaryDirectory() as tmp:
         if gram and not download(sorted(set(gram.values())), tmp, PYTHONS[0], pip_tag):
             print("  ! не все грамматики скачались", file=sys.stderr)
@@ -134,8 +149,9 @@ def build(platform_name, pip_tag, grammars_only=False):
                 if tag.startswith("cp"):
                     extract(whl, os.path.join(out, tag), {"tree_sitter"})
         add_grammars(out, pip_tag)
-    size = sum(os.path.getsize(os.path.join(r, f))
-               for r, _, fs in os.walk(out) for f in fs)
+    size = sum(
+        os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(out) for f in fs
+    )
     print(f"{platform_name}: {sorted(os.listdir(out))}  ({size / 1024 / 1024:.1f} МБ)")
 
 
@@ -144,8 +160,10 @@ def build(platform_name, pip_tag, grammars_only=False):
 # used by Inkscape and Dunnart; libavoid-js is its WebAssembly build.
 AVOID_VERSION = "0.5.0-beta.5"
 AVOID_URL = f"https://registry.npmjs.org/libavoid-js/-/libavoid-js-{AVOID_VERSION}.tgz"
-AVOID_SHA512 = ("jHkn6A10815TgFhZ1paUD/NDnQkg4C66qJc2Juj1NpmO/"
-                "+QXnJ4UjIdKQarkXLmI/QgXhEO3RWDxMi3i+uHPwA==")
+AVOID_SHA512 = (
+    "jHkn6A10815TgFhZ1paUD/NDnQkg4C66qJc2Juj1NpmO/"
+    "+QXnJ4UjIdKQarkXLmI/QgXhEO3RWDxMi3i+uHPwA=="
+)
 AVOID_README = """\
 # libavoid-js {version}
 
@@ -168,15 +186,19 @@ def _classic_script(js):
     js = js.replace("import.meta.url", '(typeof document<"u"&&document.baseURI||"")')
     js = re.sub(r"\n?//# sourceMappingURL=\S*\s*$", "", js)
     # the module ends with: var W=Wrap(Factory);export{W as AvoidLib};
-    tail = re.search(r"var (\w+)=\w+\((\w+)\);export\s*\{\s*\1 as AvoidLib\s*\};?\s*$", js)
+    tail = re.search(
+        r"var (\w+)=\w+\((\w+)\);export\s*\{\s*\1 as AvoidLib\s*\};?\s*$", js
+    )
     if not tail:
         raise SystemExit("libavoid-js: не узнаю конец модуля — формат пакета сменился")
-    js = js[:tail.start()] + f"return {tail.group(2)};"
+    js = js[: tail.start()] + f"return {tail.group(2)};"
     if re.search(r"\bimport\.meta\b|\bexport\s*\{", js):
         raise SystemExit("libavoid-js: в модуле остались import/export")
-    return (f"/* libavoid-js {AVOID_VERSION} (LGPL-2.1-or-later), "
-            "https://github.com/Aksem/libavoid-js */\n"
-            f"var AvoidModule=(function(){{{js}\n}})();\n")
+    return (
+        f"/* libavoid-js {AVOID_VERSION} (LGPL-2.1-or-later), "
+        "https://github.com/Aksem/libavoid-js */\n"
+        f"var AvoidModule=(function(){{{js}\n}})();\n"
+    )
 
 
 def build_web():
@@ -188,18 +210,26 @@ def build_web():
     if digest != AVOID_SHA512:
         raise SystemExit("libavoid-js: контрольная сумма не совпала")
     with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tar:
-        read = lambda name: tar.extractfile(f"package/{name}").read()  # noqa: E731
-        js, wasm, lic = read("dist/index.js"), read("dist/libavoid.wasm"), read("LICENSE")
+        read = lambda name: tar.extractfile(f"package/{name}").read()
+        js, wasm, lic = (
+            read("dist/index.js"),
+            read("dist/libavoid.wasm"),
+            read("LICENSE"),
+        )
     if os.path.isdir(out):
         shutil.rmtree(out)
     os.makedirs(out)
-    with open(os.path.join(out, "libavoid.js"), "w", encoding="utf-8", newline="\n") as fh:
+    with open(
+        os.path.join(out, "libavoid.js"), "w", encoding="utf-8", newline="\n"
+    ) as fh:
         fh.write(_classic_script(js.decode("utf-8")))
     with open(os.path.join(out, "libavoid.wasm"), "wb") as fh:
         fh.write(wasm)
     with open(os.path.join(out, "LICENSE"), "wb") as fh:
         fh.write(lic)
-    with open(os.path.join(out, "README.md"), "w", encoding="utf-8", newline="\n") as fh:
+    with open(
+        os.path.join(out, "README.md"), "w", encoding="utf-8", newline="\n"
+    ) as fh:
         fh.write(AVOID_README.format(version=AVOID_VERSION))
     size = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out))
     print(f"web: {sorted(os.listdir(out))}  ({size / 1024:.0f} КБ)")
@@ -207,13 +237,20 @@ def build_web():
 
 def main():
     ap = argparse.ArgumentParser(description="Пересборка папки vendor")
-    ap.add_argument("--only", choices=sorted({**TARGETS, **OPTIONAL}),
-                    help="только одна платформа (в том числе необязательная)")
-    ap.add_argument("--web", action="store_true",
-                    help="только библиотеки редактора (libavoid-js)")
-    ap.add_argument("--grammars", action="store_true",
-                    help="только добавить недостающие грамматики языков (и tomli "
-                         "для Python 3.10), не трогая уже скачанное")
+    ap.add_argument(
+        "--only",
+        choices=sorted({**TARGETS, **OPTIONAL}),
+        help="только одна платформа (в том числе необязательная)",
+    )
+    ap.add_argument(
+        "--web", action="store_true", help="только библиотеки редактора (libavoid-js)"
+    )
+    ap.add_argument(
+        "--grammars",
+        action="store_true",
+        help="только добавить недостающие грамматики языков (и tomli "
+        "для Python 3.10), не трогая уже скачанное",
+    )
     args = ap.parse_args()
     if args.web:
         build_web()

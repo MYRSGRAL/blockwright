@@ -12,11 +12,34 @@ from tree_sitter import Parser
 from .langs import find, find_all, registry
 from .text import normalize
 
-SKIP_DIRS = {".git", ".svn", "node_modules", "build", "cmake-build-debug",
-             "cmake-build-release", "Debug", "Release", ".vs", ".idea",
-             "x64", "x86", "__pycache__", "venv", ".venv", "vendor",
-             "third_party", "external", "site-packages", ".tox", ".mypy_cache",
-             ".pytest_cache", ".gradle", "target", "obj", "dist"}
+SKIP_DIRS = {
+    ".git",
+    ".svn",
+    "node_modules",
+    "build",
+    "cmake-build-debug",
+    "cmake-build-release",
+    "Debug",
+    "Release",
+    ".vs",
+    ".idea",
+    "x64",
+    "x86",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "vendor",
+    "third_party",
+    "external",
+    "site-packages",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".gradle",
+    "target",
+    "obj",
+    "dist",
+}
 
 
 def extensions(only=None):
@@ -87,7 +110,7 @@ def parse_source(src: bytes, spec):
 def _text(src, node):
     if node is None:
         return ""
-    return src[node.start_byte:node.end_byte].decode("utf-8", "replace")
+    return src[node.start_byte : node.end_byte].decode("utf-8", "replace")
 
 
 def _chain(node, depth=12):
@@ -175,7 +198,9 @@ def collect_functions(src, root, spec):
 
     def rec(node, inside):
         if node.type in spec.fn_nodes:
-            if (not inside or spec.nested) and find(node, spec.fn_body, spec) is not None:
+            if (not inside or spec.nested) and find(
+                node, spec.fn_body, spec
+            ) is not None:
                 out.append(node)
             inside = True
         for c in node.named_children:
@@ -190,7 +215,7 @@ def _signature(src, node, body, spec):
         head = find(node, spec.fn_signature, spec)
         raw = _text(src, head)
     else:
-        raw = src[node.start_byte:body.start_byte].decode("utf-8", "replace")
+        raw = src[node.start_byte : body.start_byte].decode("utf-8", "replace")
     return re.sub(r"\s*(?:=>|[:;{])\s*$", "", normalize(raw))
 
 
@@ -226,12 +251,17 @@ def describe_program(src, root, spec, path):
         return None
     holder = node
     if prog["body"]:
-        holder = next((h for h in (find(node, b, spec) for b in prog["body"])
-                       if h is not None), None)
+        holder = next(
+            (h for h in (find(node, b, spec) for b in prog["body"]) if h is not None),
+            None,
+        )
     if holder is None:
         return None
-    stmts = [c for c in spec.named(holder)
-             if c.type not in prog["skip"] and c.type not in spec.fn_nodes]
+    stmts = [
+        c
+        for c in spec.named(holder)
+        if c.type not in prog["skip"] and c.type not in spec.fn_nodes
+    ]
     if not stmts:
         return None
     name = ""
@@ -258,7 +288,9 @@ def collect_known_names(src, root, spec):
     stack = [root]
     while stack:
         n = stack.pop()
-        if n.type in kinds and (n.type in spec.fn_nodes or _required(n, spec) is not None):
+        if n.type in kinds and (
+            n.type in spec.fn_nodes or _required(n, spec) is not None
+        ):
             nm = function_name(src, n, spec)
             if nm:
                 for sep in spec.separators:
@@ -268,6 +300,16 @@ def collect_known_names(src, root, spec):
     return names
 
 
-__all__ = ["SKIP_DIRS", "extensions", "discover", "count_errors", "guess_language",
-           "parse_source", "collect_functions", "describe_function",
-           "describe_program", "collect_known_names", "find_all"]
+__all__ = [
+    "SKIP_DIRS",
+    "collect_functions",
+    "collect_known_names",
+    "count_errors",
+    "describe_function",
+    "describe_program",
+    "discover",
+    "extensions",
+    "find_all",
+    "guess_language",
+    "parse_source",
+]

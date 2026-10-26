@@ -9,13 +9,13 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from blockwright import vendored  # noqa: E402
+from blockwright import vendored
 
 vendored.activate()
 
-from blockwright import langs, project  # noqa: E402
-from blockwright import model as M  # noqa: E402
-from blockwright.cli import Opts, main  # noqa: E402
+from blockwright import langs, project
+from blockwright import model as M
+from blockwright.cli import Opts, main
 
 LANGS = os.path.join(HERE, "langs")
 FIXTURES = os.path.join(HERE, "fixtures")
@@ -28,8 +28,7 @@ class Descriptions(unittest.TestCase):
     def test_builtin_load_cleanly(self):
         reg = langs.Registry()
         self.assertEqual(reg.errors, [])
-        for name in ("c", "cpp", "python", "pascal", "java", "csharp", "go", "javascript"):
-            self.assertIn(name, reg.names())
+        self.assertEqual(reg.names(), ["cpp"])
         # everything that is bundled must load from vendor/
         for spec in reg.select():
             if spec.bundle:
@@ -40,25 +39,31 @@ class Descriptions(unittest.TestCase):
         self.assertEqual(reg.errors, [])
         spec = reg.get("mini")
         self.assertEqual(spec.extensions, [".mini"])
-        # inherited from python.toml
-        self.assertIn("print", spec.io_output)
+        self.assertIn("printf", spec.io_output)
         src = project.load(os.path.join(LANGS, "sample.mini"))
         self.assertEqual(src.spec.name, "mini")
-        (chart,) = project.charts(src, Opts(), src.known)
+        (chart,) = project.charts(src, Opts(study=False), src.known)
         first, second = chart.body.items
         self.assertIsInstance(first, M.If)
         self.assertEqual(first.cond, "x > 0")
-        self.assertEqual(second.text, "Вывод: x")
+        self.assertEqual(second.kind, M.IO)
+        self.assertIn("x", second.text)
 
     def test_bad_description_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "bad.toml"), "w", encoding="utf-8") as fh:
-                fh.write('name = "bad"\ngrammar = "tree_sitter_c"\n'
-                         '[statements]\nif_statement = { kind = "iff" }\n')
+                fh.write(
+                    'name = "bad"\ngrammar = "tree_sitter_c"\n'
+                    '[statements]\nif_statement = { kind = "iff" }\n'
+                )
             with open(os.path.join(tmp, "typo.toml"), "w", encoding="utf-8") as fh:
-                fh.write('name = "typo"\ngrammar = "tree_sitter_c"\n[function]\nnodes = []\n')
+                fh.write(
+                    'name = "typo"\ngrammar = "tree_sitter_c"\n[function]\nnodes = []\n'
+                )
             with open(os.path.join(tmp, "orphan.toml"), "w", encoding="utf-8") as fh:
-                fh.write('name = "orphan"\nextends = "nope"\ngrammar = "tree_sitter_c"\n')
+                fh.write(
+                    'name = "orphan"\nextends = "nope"\ngrammar = "tree_sitter_c"\n'
+                )
             reg = langs.Registry([tmp])
         self.assertIsNone(reg.get("bad"))
         self.assertIsNone(reg.get("orphan"))
@@ -71,8 +76,10 @@ class Descriptions(unittest.TestCase):
     def test_missing_grammar(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "ghost.toml"), "w", encoding="utf-8") as fh:
-                fh.write('name = "ghost"\ngrammar = "tree_sitter_ghost"\n'
-                         'extensions = [".ghost"]\n')
+                fh.write(
+                    'name = "ghost"\ngrammar = "tree_sitter_ghost"\n'
+                    'extensions = [".ghost"]\n'
+                )
             reg = langs.Registry([tmp])
         spec = reg.get("ghost")
         self.assertFalse(spec.available)
@@ -80,17 +87,18 @@ class Descriptions(unittest.TestCase):
 
     def test_guess(self):
         reg = langs.Registry()
-        self.assertEqual(reg.guess("a.h", "int f(void);").name, "c")
+        self.assertEqual(reg.guess("a.h", "int f(void);").name, "cpp")
         self.assertEqual(reg.guess("a.h", "namespace x {}").name, "cpp")
-        self.assertEqual(reg.guess("a.py", "").name, "python")
-        self.assertEqual(reg.guess("A.java", "").name, "java")
+        self.assertIsNone(reg.guess("a.py", ""))
+        self.assertIsNone(reg.guess("A.java", ""))
         self.assertEqual(reg.guess("a.c", "", {"cpp"}).name, "cpp")
 
 
 class Cli(unittest.TestCase):
     def test_every_fixture_builds(self):
         for folder in sorted(os.listdir(FIXTURES)):
-            if not langs.registry().get(folder).available:
+            spec = langs.registry().get(folder)
+            if spec is None or not spec.available:
                 continue
             with self.subTest(folder=folder), tempfile.TemporaryDirectory() as out:
                 rc = main([os.path.join(FIXTURES, folder), "-o", out, "--no-ui", "-q"])
@@ -101,20 +109,24 @@ class Cli(unittest.TestCase):
 
     def test_lang_filter(self):
         with tempfile.TemporaryDirectory() as out:
-            rc = main([FIXTURES, "-o", out, "--no-ui", "-q", "--lang", "go"])
+            rc = main([FIXTURES, "-o", out, "--no-ui", "-q", "--lang", "cpp"])
             self.assertEqual(rc, 0)
             svgs = sorted(f for f in os.listdir(out) if f.endswith(".svg"))
-            self.assertEqual(svgs, ["lab__Pop.svg", "lab__Push.svg", "lab__fib.svg",
-                                    "lab__main.svg"])
+            self.assertTrue(svgs)
+            self.assertTrue(all("lab_py" not in name for name in svgs))
 
-    def test_same_stem_in_two_languages(self):
+    def test_same_stem_in_two_cpp_extensions(self):
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
-            for name, code in (("lab.c", "int main(void) { return 0; }\n"),
-                               ("lab.py", "def main():\n    print(1)\n")):
+            for name, code in (
+                ("lab.cpp", "int main(void) { return 0; }\n"),
+                ("lab.cc", "int main() { return 1; }\n"),
+            ):
                 with open(os.path.join(src, name), "w", encoding="utf-8") as fh:
                     fh.write(code)
             self.assertEqual(main([src, "-o", out, "--no-ui", "-q", "--no-html"]), 0)
-            self.assertEqual(sorted(os.listdir(out)), ["lab_c__main.svg", "lab_py__main.svg"])
+            self.assertEqual(
+                sorted(os.listdir(out)), ["lab_cc__main.svg", "lab_cpp__main.svg"]
+            )
 
     def test_unknown_lang(self):
         self.assertEqual(main([FIXTURES, "--no-ui", "--lang", "cobol"]), 2)

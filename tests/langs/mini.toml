@@ -1,9 +1,9 @@
-# A test description: Python with `assert` drawn as a decision by a hook.
+# Проверка расширения C++-описания пользовательским обработчиком.
 name = "mini"
 title = "Mini"
-extends = "python"
+extends = "cpp"
 extensions = [".mini"]
 hooks = "mini_hooks.py"
 
 [statements]
-assert_statement = { hook = "assert_as_decision" }
+if_statement = { hook = "if_as_decision" }

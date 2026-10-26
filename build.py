@@ -25,8 +25,8 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from blockwright.vendored import paths as vendor_paths  # noqa: E402
-from blockwright.vendored import platform_tag  # noqa: E402
+from blockwright.vendored import paths as vendor_paths
+from blockwright.vendored import platform_tag
 
 NAME = "blockwright"
 
@@ -34,6 +34,7 @@ NAME = "blockwright"
 def have_pyinstaller():
     try:
         import PyInstaller  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -79,40 +80,66 @@ def main():
         return 0
 
     if not have_pyinstaller():
-        print("Нужен PyInstaller. Установите его командой:\n"
-              f"    {os.path.basename(sys.executable)} -m pip install pyinstaller\n",
-              file=sys.stderr)
+        print(
+            "Нужен PyInstaller. Установите его командой:\n"
+            f"    {os.path.basename(sys.executable)} -m pip install pyinstaller\n",
+            file=sys.stderr,
+        )
         return 2
 
     vendor = vendor_paths(BASE)
     if not vendor:
-        print(f"Нет парсеров для {platform_tag()} / Python "
-              f"{sys.version_info.major}.{sys.version_info.minor} в папке vendor — "
-              "будут взяты установленные в систему.", file=sys.stderr)
+        print(
+            f"Нет парсеров для {platform_tag()} / Python "
+            f"{sys.version_info.major}.{sys.version_info.minor} в папке vendor — "
+            "будут взяты установленные в систему.",
+            file=sys.stderr,
+        )
 
-    cmd = [sys.executable, "-m", "PyInstaller", "--onefile", "--console",
-           "--name", args.name, "--noconfirm", "--clean",
-           "--distpath", os.path.join(BASE, "dist"),
-           "--workpath", os.path.join(BASE, "build"),
-           "--specpath", BASE]
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--onefile",
+        "--console",
+        "--name",
+        args.name,
+        "--noconfirm",
+        "--clean",
+        "--distpath",
+        os.path.join(BASE, "dist"),
+        "--workpath",
+        os.path.join(BASE, "build"),
+        "--specpath",
+        BASE,
+    ]
     for p in vendor:
         cmd += ["--paths", p]
     # grammars are imported by name from the language descriptions
     for mod in ("tree_sitter", *grammar_modules()):
         cmd += ["--hidden-import", mod, "--collect-binaries", mod]
-    if sys.version_info < (3, 11):
-        cmd += ["--hidden-import", "tomli"]
+    cmd += ["--copy-metadata", "Pillow"]
     langs = os.path.join(BASE, "blockwright", "languages")
-    cmd += ["--add-data", f"{langs}{os.pathsep}{os.path.join('blockwright', 'languages')}"]
-    for mod in ("blockwright.tui", "blockwright.album", "blockwright.png"):
+    cmd += [
+        "--add-data",
+        f"{langs}{os.pathsep}{os.path.join('blockwright', 'languages')}",
+    ]
+    for mod in (
+        "blockwright.tui",
+        "blockwright.album",
+        "blockwright.png",
+        "PIL.ImageFont",
+    ):
         cmd += ["--hidden-import", mod]
     # the editor's connector router, inlined into index.html
     web = os.path.join(BASE, "vendor", "web")
     if os.path.isdir(web):
         cmd += ["--add-data", f"{web}{os.pathsep}{os.path.join('vendor', 'web')}"]
     else:
-        print("Нет vendor/web — редактор будет прокладывать линии упрощённо.",
-              file=sys.stderr)
+        print(
+            "Нет vendor/web — редактор будет прокладывать линии упрощённо.",
+            file=sys.stderr,
+        )
     cmd += ["--paths", BASE, "--hidden-import", "blockwright"]
     cmd.append(os.path.join(BASE, "tools", "entry.py"))
 

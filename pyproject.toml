@@ -5,12 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "blockwright"
 version = "1.4.0"
-description = "GOST 19.701-90 flowcharts from source code: C, C++, Python, Java, C#, Go, JavaScript, Pascal and any language you describe"
+description = "Компактные чёрно-белые блок-схемы учебных программ C++"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
-keywords = ["flowchart", "блок-схема", "гост", "c", "cpp", "python", "pascal", "java",
-            "csharp", "go", "javascript", "tree-sitter", "svg"]
+keywords = ["flowchart", "блок-схема", "гост", "cpp", "svg", "tree-sitter"]
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Education",
@@ -21,19 +20,9 @@ classifiers = [
 ]
 dependencies = [
     "tree_sitter>=0.23",
-    "tree_sitter_c>=0.23",
     "tree_sitter_cpp>=0.23",
-    "tree_sitter_python>=0.23",
-    "tree_sitter_java>=0.23",
-    "tree_sitter_c_sharp>=0.23",
-    "tree_sitter_go>=0.23",
-    "tree_sitter_javascript>=0.23",
-    "tomli>=1.1; python_version < '3.11'",
+    "Pillow>=11.3",
 ]
-
-[project.optional-dependencies]
-# AGPL-3.0, so not a default dependency and not bundled
-pascal = ["tree_sitter_pascal"]
 
 [project.scripts]
 blockwright = "blockwright.__main__:main"
