@@ -12,8 +12,20 @@ from .langs import find, find_all, parse_slice
 from .text import normalize
 
 # escape sequence -> what appears on screen
-_ESCAPES = {"n": " ", "t": " ", "r": "", "0": "", "a": "", "b": "", "f": " ",
-            "v": " ", "\\": "\\", '"': '"', "'": "'", "?": "?"}
+_ESCAPES = {
+    "n": " ",
+    "t": " ",
+    "r": "",
+    "0": "",
+    "a": "",
+    "b": "",
+    "f": " ",
+    "v": " ",
+    "\\": "\\",
+    '"': '"',
+    "'": "'",
+    "?": "?",
+}
 
 _INT_RE = re.compile(r"^[+-]?\d+$")
 _VAR_RE = re.compile(r"[^\W\d]\w*")
@@ -22,21 +34,41 @@ _COMPOSITE_RE = re.compile(r"\{(\d+)(?:[,:][^}]*)?\}")
 # words printed inside blocks
 CHART_L10N = {
     "ru": {
-        "out": "Вывод: ", "out_plain": "Вывод", "in": "Ввод: ", "in_plain": "Ввод",
-        "newline": "Перевод строки", "return": "Возврат {0}", "return_bare": "Возврат",
-        "exception": "Исключение: {0}", "exception_bare": "Исключение",
-        "caught": "Возникло исключение {0}", "caught_bare": "Возникло исключение",
-        "foreach": "для каждого {0} из {1}", "more": "есть ещё элементы {0}?",
-        "true": "истина", "condition": "условие", "default": "иначе",
+        "out": "Вывод: ",
+        "out_plain": "Вывод",
+        "in": "Ввод: ",
+        "in_plain": "Ввод",
+        "newline": "Перевод строки",
+        "return": "Возврат {0}",
+        "return_bare": "Возврат",
+        "exception": "Исключение: {0}",
+        "exception_bare": "Исключение",
+        "caught": "Возникло исключение {0}",
+        "caught_bare": "Возникло исключение",
+        "foreach": "для каждого {0} из {1}",
+        "more": "есть ещё элементы {0}?",
+        "true": "истина",
+        "condition": "условие",
+        "default": "иначе",
         "no_break": "цикл завершён без break?",
     },
     "en": {
-        "out": "Output: ", "out_plain": "Output", "in": "Input: ", "in_plain": "Input",
-        "newline": "New line", "return": "Return {0}", "return_bare": "Return",
-        "exception": "Exception: {0}", "exception_bare": "Exception",
-        "caught": "Exception caught {0}", "caught_bare": "Exception caught",
-        "foreach": "for each {0} in {1}", "more": "more elements in {0}?",
-        "true": "true", "condition": "condition", "default": "else",
+        "out": "Output: ",
+        "out_plain": "Output",
+        "in": "Input: ",
+        "in_plain": "Input",
+        "newline": "New line",
+        "return": "Return {0}",
+        "return_bare": "Return",
+        "exception": "Exception: {0}",
+        "exception_bare": "Exception",
+        "caught": "Exception caught {0}",
+        "caught_bare": "Exception caught",
+        "foreach": "for each {0} in {1}",
+        "more": "more elements in {0}?",
+        "true": "true",
+        "condition": "condition",
+        "default": "else",
         "no_break": "loop ended without break?",
     },
 }
@@ -109,6 +141,7 @@ class Builder:
     def __init__(self, src: bytes, opts, known_funcs=frozenset(), spec=None):
         if spec is None:
             from .langs import registry
+
             spec = registry().get("cpp")
         self.src = src
         self.opts = opts
@@ -119,7 +152,8 @@ class Builder:
         # printf/scanf conversion specifiers
         self._spec_re = re.compile(
             r"%(?:%|[-+ #0']*\*?\d*(?:\.\*?\d+)?(?:hh|h|ll|l|L|q|z|j|t)?"
-            "[" + re.escape(spec.io_conversions) + "])")
+            "[" + re.escape(spec.io_conversions) + "])"
+        )
 
     # ------------------------------------------------------------ basics
     def L(self, key, *args):
@@ -128,12 +162,16 @@ class Builder:
     def raw(self, node):
         if node is None:
             return ""
-        return self.src[node.start_byte:node.end_byte].decode("utf-8", "replace").strip()
+        return (
+            self.src[node.start_byte : node.end_byte].decode("utf-8", "replace").strip()
+        )
 
     def t(self, node):
         if node is None:
             return ""
-        s = normalize(self.src[node.start_byte:node.end_byte].decode("utf-8", "replace"))
+        s = normalize(
+            self.src[node.start_byte : node.end_byte].decode("utf-8", "replace")
+        )
         if not self.opts.keep_std:
             for rx in self.spec.strip:
                 s = rx.sub("", s)
@@ -153,7 +191,9 @@ class Builder:
         return hit
 
     def find_all(self, node, path):
-        return [n for n in find_all(node, path, self.spec) if n.type not in self.spec.empty]
+        return [
+            n for n in find_all(node, path, self.spec) if n.type not in self.spec.empty
+        ]
 
     def named(self, node):
         return self.spec.named(node) if node is not None else []
@@ -228,6 +268,7 @@ class Builder:
         fn = self.spec.hooks.get(name)
         if fn is None:
             from . import hooks
+
             fn = getattr(hooks, name)
         return fn(self, node, rule)
 
@@ -261,8 +302,9 @@ class Builder:
         if io is not None:
             return [io]
         if self.is_user_call(inner) or (
-                not inner.named_child_count
-                and self.spec.fold(self.raw(inner)) in self.known):
+            not inner.named_child_count
+            and self.spec.fold(self.raw(inner)) in self.known
+        ):
             # `f(x)`, or a bare `Show;` in Pascal
             return [M.Simple(M.PREDEF, self.t(inner))]
         txt = self.t(inner)
@@ -323,15 +365,21 @@ class Builder:
 
     def k_while(self, n, r):
         cond = self.find(n, r.get("condition"))
-        loop = M.While(self.cond_text(cond) if cond is not None else self.L("true"),
-                       self.block(self.find(n, r.get("body"))))
+        loop = M.While(
+            self.cond_text(cond) if cond is not None else self.L("true"),
+            self.block(self.find(n, r.get("body"))),
+        )
         return self.loop_else(loop, self.find(n, r.get("else")))
 
     def k_do(self, n, r):
         cond = self.find(n, r.get("condition"))
-        return [M.DoWhile(self.cond_text(cond) if cond is not None else self.L("true"),
-                          self.block(self.find(n, r.get("body"))),
-                          until=bool(r.get("until")))]
+        return [
+            M.DoWhile(
+                self.cond_text(cond) if cond is not None else self.L("true"),
+                self.block(self.find(n, r.get("body"))),
+                until=bool(r.get("until")),
+            )
+        ]
 
     def loop_else(self, loop, else_node):
         """Python's `for … else` / `while … else`."""
@@ -358,7 +406,9 @@ class Builder:
         stack = list(init.named_children)
         while stack:
             c = stack.pop(0)
-            target = c.child_by_field_name("declarator") or c.child_by_field_name("name")
+            target = c.child_by_field_name("declarator") or c.child_by_field_name(
+                "name"
+            )
             if target is not None and c.type not in self.spec.fn_nodes:
                 value = c.child_by_field_name("value")
                 if value is None:
@@ -407,7 +457,11 @@ class Builder:
             return None
         if step < 0 and op not in (">", ">="):
             return None
-        end = limit if op in ("<=", ">=") else (_minus_one(limit) if step > 0 else _plus_one(limit))
+        end = (
+            limit
+            if op in ("<=", ">=")
+            else (_minus_one(limit) if step > 0 else _plus_one(limit))
+        )
         header = f"{var} = {start}, {end}"
         if step != 1:
             header += f", {step}"
@@ -440,10 +494,13 @@ class Builder:
             a = self.spec.assign
             op = "<=" if step > 0 else ">="
             upd = f"{var} + {step}" if step > 0 else f"{var} - {-step}"
-            return M.ForLoop(body=body, style="decision",
-                             init=M.Simple(M.PROCESS, f"{var} {a} {start}"),
-                             cond=f"{var} {op} {end}",
-                             update=M.Simple(M.PROCESS, f"{var} {a} {upd}"))
+            return M.ForLoop(
+                body=body,
+                style="decision",
+                init=M.Simple(M.PROCESS, f"{var} {a} {start}"),
+                cond=f"{var} {op} {end}",
+                update=M.Simple(M.PROCESS, f"{var} {a} {upd}"),
+            )
         header = f"{var} = {start}, {end}"
         if step != 1:
             header += f", {step}"
@@ -459,7 +516,11 @@ class Builder:
             step = int(st) if _INT_RE.match(st) else 1
         if r.get("descending") and any(c.type == r["descending"] for c in n.children):
             step = -abs(step)
-        return [self.counting_loop(var, start, end, step, self.block(self.find(n, r.get("body"))))]
+        return [
+            self.counting_loop(
+                var, start, end, step, self.block(self.find(n, r.get("body")))
+            )
+        ]
 
     def _range_loop(self, var, it, r, body):
         """`for i in range(a, b, step)` as a counting loop."""
@@ -467,9 +528,15 @@ class Builder:
         if not names or not _VAR_RE.fullmatch(var):
             return None
         kind = self.spec.call_nodes.get(it.type)
-        if kind is None or self.spec.fold(self.callee(it)) not in {self.spec.fold(x) for x in names}:
+        if kind is None or self.spec.fold(self.callee(it)) not in {
+            self.spec.fold(x) for x in names
+        }:
             return None
-        args = [a for a in self.named(self.find(it, kind)) if a.type not in self.spec.io_skip_args]
+        args = [
+            a
+            for a in self.named(self.find(it, kind))
+            if a.type not in self.spec.io_skip_args
+        ]
         vals = [self.t(a) for a in args]
         if not 1 <= len(vals) <= 3:
             return None
@@ -490,11 +557,17 @@ class Builder:
         loop = self._range_loop(var, it_node, r, body) if it_node is not None else None
         if loop is None:
             if self.opts.for_style == "decision":
-                loop = M.ForLoop(body=body, style="decision", init=None,
-                                 cond=self.L("more", cont), update=None)
+                loop = M.ForLoop(
+                    body=body,
+                    style="decision",
+                    init=None,
+                    cond=self.L("more", cont),
+                    update=None,
+                )
             else:
-                loop = M.ForLoop(body=body, style="hexagon",
-                                 header=self.L("foreach", var, cont))
+                loop = M.ForLoop(
+                    body=body, style="hexagon", header=self.L("foreach", var, cont)
+                )
         return self.loop_else(loop, self.find(n, r.get("else")))
 
     # ------------------------------------------------------------ switch
@@ -515,8 +588,12 @@ class Builder:
             for c in holder.children:
                 if c.type == after:
                     seen = True
-                elif seen and c.is_named and not self.spec.skipped(c) \
-                        and c.type not in case_rules:
+                elif (
+                    seen
+                    and c.is_named
+                    and not self.spec.skipped(c)
+                    and c.type not in case_rules
+                ):
                     tail_default.append(c)
 
         cases, pending = [], []
@@ -527,8 +604,11 @@ class Builder:
                 label_nodes += [c for c in self.named(cs) if c.type in co["labels"]]
             labels = [strip.sub("", self.t(x)).strip() for x in label_nodes]
             labels = [x for x in labels if x]
-            is_default = bool(co.get("default")) or not labels \
+            is_default = (
+                bool(co.get("default"))
+                or not labels
                 or any(x in default_labels for x in labels)
+            )
             if is_default:
                 labels = [self.L("default")]
             if co.get("body"):
@@ -610,13 +690,22 @@ class Builder:
 
     def k_throw(self, n, r):
         txt = self.t(self._value(n, r))
-        return [M.Simple(M.TERMINATOR,
-                         self.L("exception", txt) if txt else self.L("exception_bare"),
-                         terminal=True)]
+        return [
+            M.Simple(
+                M.TERMINATOR,
+                self.L("exception", txt) if txt else self.L("exception_bare"),
+                terminal=True,
+            )
+        ]
 
     def k_goto(self, n, r):
-        return [M.Simple(M.CONNECTOR, self.raw(self.find(n, r.get("label", "label"))),
-                         terminal=True)]
+        return [
+            M.Simple(
+                M.CONNECTOR,
+                self.raw(self.find(n, r.get("label", "label"))),
+                terminal=True,
+            )
+        ]
 
     def k_label(self, n, r):
         lab = self.find(n, r.get("label", "label"))
@@ -675,7 +764,7 @@ class Builder:
         body = self.find(n, r.get("body", "body"))
         if body is None:
             return self.stmt_as_process(n)
-        head = self.src[n.start_byte:body.start_byte].decode("utf-8", "replace")
+        head = self.src[n.start_byte : body.start_byte].decode("utf-8", "replace")
         head = re.sub(r"\s*[:{]\s*$", "", normalize(head))
         out = [M.Simple(M.PROCESS, head)] if head else []
         return out + self.stmt_list(body)
@@ -689,7 +778,7 @@ class Builder:
                 return re.sub(r"\s+", "", self.raw(fn))
         args = self.find(call, self.spec.call_nodes.get(call.type))
         end = args.start_byte if args is not None else call.end_byte
-        head = self.src[call.start_byte:end].decode("utf-8", "replace")
+        head = self.src[call.start_byte : end].decode("utf-8", "replace")
         return re.sub(r"\s+", "", head)
 
     def callee_name(self, call):
@@ -707,7 +796,7 @@ class Builder:
     def call_args(self, call):
         arglist = self.find(call, self.spec.call_nodes.get(call.type))
         out = []
-        for a in (arglist.named_children if arglist is not None else []):
+        for a in arglist.named_children if arglist is not None else []:
             if a.type in self.spec.io_skip_args:
                 continue
             if a.type in self.spec.io_unwrap_args and a.named_child_count == 1:
@@ -727,8 +816,11 @@ class Builder:
             return None
         sp = self.spec
         if node.type in sp.string_concat:
-            vals = [self._string_value(c) for c in node.named_children
-                    if c.type in sp.string_nodes]
+            vals = [
+                self._string_value(c)
+                for c in node.named_children
+                if c.type in sp.string_nodes
+            ]
             if not vals or any(v is None for v in vals):
                 return None
             return "".join(vals)
@@ -741,14 +833,14 @@ class Builder:
         i = min(pos)
         quote = raw[i]
         prefix = raw[:i].lower()
-        width = 3 if raw[i:i + 3] == quote * 3 and len(raw) >= i + 6 else 1
+        width = 3 if raw[i : i + 3] == quote * 3 and len(raw) >= i + 6 else 1
         j = len(raw) - width
-        if j < i + width or raw[j:j + width] != quote * width:
+        if j < i + width or raw[j : j + width] != quote * width:
             j = raw.rfind(quote)
             width = 1
         if j <= i:
             return None
-        body = raw[i + width:j]
+        body = raw[i + width : j]
         if sp.template:
             body = body.replace(sp.template, "{")
         if sp.escape == "double":
@@ -834,14 +926,17 @@ class Builder:
             return prefix + ", ".join(p for p in parts if p)
         used = [0]
         if style == "composite":
+
             def repl(m):
                 k = int(m.group(1))
                 if k < len(args):
                     used[0] = max(used[0], k + 1)
                     return "{" + args[k] + "}"
                 return m.group(0)
+
             body = _COMPOSITE_RE.sub(repl, fmt)
         else:
+
             def repl(m):
                 if m.group(0) == "%%":
                     return "%"
@@ -849,10 +944,11 @@ class Builder:
                     used[0] += 1
                     return "{" + args[used[0] - 1] + "}"
                 return m.group(0)
+
             body = self._spec_re.sub(repl, fmt)
             for k, v in self.spec.io_format_replace.items():
                 body = body.replace(k, v)
-        tail = args[used[0]:]
+        tail = args[used[0] :]
         if tail:
             body = body.rstrip() + " " + ", ".join("{" + a + "}" for a in tail)
         body = normalize(body).strip()
@@ -867,7 +963,7 @@ class Builder:
 
     def _stream_io(self, node):
         st = self.spec.streams
-        left, right = self.sides(node)
+        left, _right = self.sides(node)
         op = self.op_of(node) if left is not None else ""
         if op not in (st["output_operator"], st["input_operator"]):
             return None
@@ -878,12 +974,15 @@ class Builder:
             if style == "code":
                 return M.Simple(M.IO, self.t(node))
             if style == "pretty":
-                return M.Simple(M.IO, self._weave(self._segments(parts[1:]), self.L("out")))
+                return M.Simple(
+                    M.IO, self._weave(self._segments(parts[1:]), self.L("out"))
+                )
             nl = st["newline"]
             args = [self.t(p) for p in parts[1:]]
             args = [a for a in args if a not in nl and self.strip_all(a) not in nl]
-            return M.Simple(M.IO, self.L("out") + ", ".join(args)
-                            if args else self.L("newline"))
+            return M.Simple(
+                M.IO, self.L("out") + ", ".join(args) if args else self.L("newline")
+            )
         if op == st["input_operator"] and head in st["input"]:
             if style == "code":
                 return M.Simple(M.IO, self.t(node))
@@ -903,11 +1002,17 @@ class Builder:
             # a call without parentheses: Pascal `writeln;`, `readln;`
             name = self.spec.fold(self.raw(node))
             if name in self.spec.io_output:
-                return M.Simple(M.IO, self.t(node) if self.opts.io_style == "code"
-                                else self.L("newline"))
+                return M.Simple(
+                    M.IO,
+                    self.t(node) if self.opts.io_style == "code" else self.L("newline"),
+                )
             if name in self.spec.io_input:
-                return M.Simple(M.IO, self.t(node) if self.opts.io_style == "code"
-                                else self.L("in_plain"))
+                return M.Simple(
+                    M.IO,
+                    self.t(node)
+                    if self.opts.io_style == "code"
+                    else self.L("in_plain"),
+                )
             return None
         style = self.opts.io_style
         code_style = style == "code"
@@ -929,26 +1034,48 @@ class Builder:
                 k = out.get("format")
                 # with `weave` too, the format is used only when it is a literal
                 # followed by arguments: Console.WriteLine("{0}", x) vs ("a" + x)
-                if k is not None and k < len(nodes) and (
-                        "weave" not in out or (len(nodes) > k + 1
-                                               and self._string_value(nodes[k]) is not None)):
-                    return M.Simple(M.IO, self._format_call(
-                        nodes[k], nodes[k + 1:], self.L("out"), out.get("style", "printf")))
+                if (
+                    k is not None
+                    and k < len(nodes)
+                    and (
+                        "weave" not in out
+                        or (
+                            len(nodes) > k + 1
+                            and self._string_value(nodes[k]) is not None
+                        )
+                    )
+                ):
+                    return M.Simple(
+                        M.IO,
+                        self._format_call(
+                            nodes[k],
+                            nodes[k + 1 :],
+                            self.L("out"),
+                            out.get("style", "printf"),
+                        ),
+                    )
                 if "weave" in out:
                     picked = nodes[parse_slice(out["weave"])]
-                    return M.Simple(M.IO, self._weave(self._segments(picked, out.get("sep", "")),
-                                                      self.L("out")))
+                    return M.Simple(
+                        M.IO,
+                        self._weave(
+                            self._segments(picked, out.get("sep", "")), self.L("out")
+                        ),
+                    )
             if style == "pretty" and "weave" in out:
                 return M.Simple(M.IO, self.L("newline"))
             picked = args[parse_slice(out.get("args"))]
-            return M.Simple(M.IO, self.L("out") + ", ".join(picked)
-                            if picked else self.L("out_plain"))
+            return M.Simple(
+                M.IO,
+                self.L("out") + ", ".join(picked) if picked else self.L("out_plain"),
+            )
         if f is not None:
             if code_style:
                 return M.Simple(M.IO, self.t(node))
             rest = [self._strip_prefix(a) for a in args[parse_slice(f.get("args"))]]
-            return M.Simple(M.IO, self.L("in") + ", ".join(rest)
-                            if rest else self.L("in_plain"))
+            return M.Simple(
+                M.IO, self.L("in") + ", ".join(rest) if rest else self.L("in_plain")
+            )
         return None
 
     def _strip_prefix(self, arg):
@@ -958,7 +1085,7 @@ class Builder:
             changed = False
             for p in self.spec.io_input_strip:
                 if p and arg.startswith(p):
-                    arg = arg[len(p):].lstrip()
+                    arg = arg[len(p) :].lstrip()
                     changed = True
         return arg
 
@@ -966,7 +1093,10 @@ class Builder:
         stack = [node]
         while stack:
             c = stack.pop()
-            if c.type in self.spec.call_nodes and self.io_rule(self.spec.io_input, c) is not None:
+            if (
+                c.type in self.spec.call_nodes
+                and self.io_rule(self.spec.io_input, c) is not None
+            ):
                 return True
             stack.extend(c.named_children)
         return False
@@ -1030,11 +1160,14 @@ def _ends_flow(block):
     last = items[-1]
     if isinstance(last, M.Jump):
         return True
+    if isinstance(last, M.Return):
+        return True
     if isinstance(last, M.Simple):
         return last.terminal
     if isinstance(last, M.If):
-        return (last.else_ is not None and _ends_flow(last.then_)
-                and _ends_flow(last.else_))
+        return (
+            last.else_ is not None and _ends_flow(last.then_) and _ends_flow(last.else_)
+        )
     if isinstance(last, M.Switch):
         return bool(last.cases) and all(_ends_flow(c.body) for c in last.cases)
     return False

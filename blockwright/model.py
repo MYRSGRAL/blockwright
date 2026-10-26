@@ -6,42 +6,53 @@ general-purpose graph layout is needed.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 # block kinds of GOST 19.701-90
-TERMINATOR = "terminator"     # start / end / return
+TERMINATOR = "terminator"  # start / end / return
 PROCESS = "process"
 IO = "io"
+INPUT = "input"
+OUTPUT = "output"
 DECISION = "decision"
-PREDEF = "predefined"         # call of a user function
-PREP = "preparation"          # loop header
+PREDEF = "predefined"  # call of a user function
+PREP = "preparation"  # loop header
 CONNECTOR = "connector"
 
 
 @dataclass
 class Simple:
     """A single block with one entry and at most one exit."""
+
     kind: str
     text: str
-    terminal: bool = False    # no exit: return / throw
+    terminal: bool = False  # no exit: return / throw
 
 
 @dataclass
 class Jump:
     """break / continue: a jump without a block of its own."""
+
     kind: str
 
 
 @dataclass
+class Return:
+    """Обычный возврат: значение сохраняется до этапа компоновки."""
+
+    value: str
+    main: bool = False
+
+
+@dataclass
 class Seq:
-    items: List[object] = field(default_factory=list)
+    items: list[object] = field(default_factory=list)
 
 
 @dataclass
 class If:
     cond: str
     then_: object
-    else_: Optional[object] = None
+    else_: object | None = None
 
 
 @dataclass
@@ -54,7 +65,7 @@ class While:
 class DoWhile:
     cond: str
     body: object
-    until: bool = False       # Pascal `repeat … until`: the loop ends when cond holds
+    until: bool = False  # Pascal `repeat … until`: the loop ends when cond holds
 
 
 @dataclass
@@ -62,14 +73,14 @@ class ForLoop:
     body: object
     style: str = "decision"
     header: str = ""
-    init: Optional[Simple] = None
-    cond: Optional[str] = None
-    update: Optional[Simple] = None
+    init: Simple | None = None
+    cond: str | None = None
+    update: Simple | None = None
 
 
 @dataclass
 class Case:
-    labels: List[str]
+    labels: list[str]
     body: object
     fallthrough: bool = False
     is_default: bool = False
@@ -78,14 +89,14 @@ class Case:
 @dataclass
 class Switch:
     expr: str
-    cases: List[Case] = field(default_factory=list)
+    cases: list[Case] = field(default_factory=list)
 
 
 @dataclass
 class Function:
-    name: str            # qualified with class / namespace
+    name: str  # qualified with class / namespace
     signature: str
-    short: str           # text of the start block
+    short: str  # text of the start block
     file: str
     rel: str
     line: int

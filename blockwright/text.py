@@ -1,19 +1,49 @@
-"""Measuring and wrapping text inside blocks.
+"""Измерение и перенос текста со шрифтом Times New Roman/Liberation Serif."""
 
-Blocks use a monospace font, so the width of a line is exact
-(0.6 × font size per glyph) and text never runs over a block's outline.
-"""
-
+import os
 import re
+from functools import lru_cache
+from pathlib import Path
 
-FONT_MONO = "Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', 'Courier New', monospace"
-FONT_UI = "Segoe UI, 'Noto Sans', Arial, sans-serif"
+FONT_MONO = "Times New Roman, Liberation Serif, Times, serif"
+FONT_UI = FONT_MONO
 
 CHAR_RATIO = 0.6
 
 
+@lru_cache(maxsize=16)
+def _font(size: float) -> object | None:
+    """Использует установленный метрически совместимый шрифт без сетевых ресурсов."""
+    try:
+        from PIL import ImageFont
+
+        windows = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+        for path in (
+            windows / "times.ttf",
+            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+            "/Library/Fonts/Times New Roman.ttf",
+            Path.home() / "Library/Fonts/Times New Roman.ttf",
+            "/usr/share/fonts/TTF/LiberationSerif-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+            "/usr/share/fonts/liberation/LiberationSerif-Regular.ttf",
+        ):
+            if Path(path).is_file():
+                return ImageFont.truetype(path, size=size * 4)
+        return ImageFont.truetype("LiberationSerif-Regular.ttf", size=size * 4)
+    except (ImportError, OSError):
+        return None
+
+
+@lru_cache(maxsize=4096)
 def text_width(s: str, size: float) -> float:
-    return len(s) * size * CHAR_RATIO
+    font = _font(size)
+    if font is not None:
+        return font.getlength(s) / 4
+    # Консервативная оценка при отсутствии системного шрифта/Pillow.
+    return (
+        sum(0.9 if c in "ЖШЩМW@%" else 0.35 if c in "il.,:;!|' " else 0.6 for c in s)
+        * size
+    )
 
 
 def normalize(s: str) -> str:

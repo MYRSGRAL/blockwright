@@ -1,7 +1,7 @@
 """Entry point.
 
-    python -m blockwright             pick sources in the terminal
-    python -m blockwright "Lab 1"     build charts right away
+python -m blockwright             pick sources in the terminal
+python -m blockwright "Lab 1"     build charts right away
 """
 
 import sys
@@ -21,6 +21,7 @@ def main(argv=None):
         sys.stderr.write(vendored.install_hint())
         return 3
     from .cli import main as cli_main
+
     return cli_main(argv)
 
 

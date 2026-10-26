@@ -15,15 +15,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def is_termux():
-    return ("com.termux" in os.environ.get("PREFIX", "")
-            or os.path.isdir("/data/data/com.termux/files/usr"))
+    return "com.termux" in os.environ.get("PREFIX", "") or os.path.isdir(
+        "/data/data/com.termux/files/usr"
+    )
 
 
 def platform_tag():
     import platform
+
     arch = platform.machine().lower()
     if sys.platform.startswith("win"):
-        return "win_amd64" if sys.maxsize > 2 ** 32 else "win32"
+        return "win_amd64" if sys.maxsize > 2**32 else "win32"
     if sys.platform.startswith("linux"):
         if is_termux():
             return "android_" + (arch or "unknown")
@@ -38,14 +40,18 @@ def platform_tag():
 def paths(root=None):
     tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     base = os.path.join(root or ROOT, "vendor", platform_tag())
-    return [p for p in (os.path.join(base, tag), os.path.join(base, "common"))
-            if os.path.isdir(p)]
+    return [
+        p
+        for p in (os.path.join(base, tag), os.path.join(base, "common"))
+        if os.path.isdir(p)
+    ]
 
 
 def have_parsers():
     """tree-sitter itself and a TOML reader for the language descriptions."""
     try:
         import tree_sitter  # noqa: F401
+
         try:
             import tomllib  # noqa: F401
         except ImportError:
@@ -83,14 +89,20 @@ def web_asset(*parts):
 
 def install_hint():
     req = os.path.join(ROOT, "requirements.txt")
-    head = ("Не найдены парсеры tree-sitter.\n"
-            f"Python {sys.version.split()[0]}, платформа {platform_tag()}.\n")
+    head = (
+        "Не найдены парсеры tree-sitter.\n"
+        f"Python {sys.version.split()[0]}, платформа {platform_tag()}.\n"
+    )
     if is_termux():
-        return head + ("Termux собирает парсеры сам — нужен компилятор:\n"
-                       "    pkg install python clang\n"
-                       f"    pip install -r {req}\n"
-                       "Либо разом: sh tools/install-termux.sh\n")
-    return head + ("В комплекте есть сборки для CPython 3.10–3.14: "
-                   "Windows x64 и Linux x86-64.\n"
-                   "Для другой платформы выполните один раз:\n"
-                   f"    {os.path.basename(sys.executable)} -m pip install -r {req}\n")
+        return head + (
+            "Termux собирает парсеры сам — нужен компилятор:\n"
+            "    pkg install python clang\n"
+            f"    pip install -r {req}\n"
+            "Либо разом: sh tools/install-termux.sh\n"
+        )
+    return head + (
+        "В комплекте есть сборки для CPython 3.12–3.14: "
+        "Windows x64 и Linux x86-64.\n"
+        "Для другой платформы выполните один раз:\n"
+        f"    {os.path.basename(sys.executable)} -m pip install -r {req}\n"
+    )

@@ -17,15 +17,15 @@ CSS = r"""
 *,*::before,*::after{box-sizing:border-box}
 :root{
   --bg:#eef1f5; --panel:#fff; --ink:#111820; --muted:#67757f; --line:#dbe2ea;
-  --accent:#2f6fd0; --accent-soft:#e8f0fd; --danger:#c0392b; --hover:#f2f5f9;
+  --accent:#252525; --accent-soft:#eeeeee; --danger:#333333; --hover:#f2f5f9;
   --field:#fbfcfe; --chart-bg:#ffffff;
   --shadow:0 1px 2px rgba(16,24,32,.06),0 6px 20px rgba(16,24,32,.07);
   --font:"Segoe UI","Noto Sans",Inter,Arial,sans-serif;
 }
 body[data-theme="dark"]{
   --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e; --line:#26303b;
-  --accent:#4a90e2; --accent-soft:#1a2b42; --danger:#f2726f; --hover:#1c242e;
-  --field:#0f151d; --chart-bg:#11161d;
+  --accent:#bbbbbb; --accent-soft:#303030; --danger:#dddddd; --hover:#1c242e;
+  --field:#0f151d; --chart-bg:#ffffff;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
   color-scheme:dark;
 }
@@ -39,8 +39,8 @@ button{cursor:pointer;background:var(--panel);border:1px solid var(--line);
        border-radius:8px;padding:6px 11px}
 button:hover{background:var(--hover);border-color:var(--muted)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-button.primary:hover{background:#265fb8}
-button.on{background:var(--accent-soft);border-color:#b7d0f2;color:#1d4f9e}
+button.primary:hover{background:#404040}
+button.on{background:var(--accent-soft);border-color:#888;color:var(--ink)}
 button.ghost{border-color:transparent;background:transparent}
 button:disabled{opacity:.4;cursor:default}
 .topbar{flex:0 0 auto;height:var(--top);display:flex;align-items:center;gap:8px;
@@ -67,7 +67,7 @@ aside.insp{flex:0 0 280px;border-left:1px solid var(--line);padding:12px 14px;
         color:var(--ink);text-decoration:none;overflow-wrap:anywhere;line-height:1.35;
         cursor:pointer}
 .tree a:hover{background:var(--hover)}
-.tree a.active{background:var(--accent-soft);color:#1d4f9e;font-weight:600}
+.tree a.active{background:var(--accent-soft);color:var(--ink);font-weight:600}
 .tree a .ln{color:var(--muted);font-size:11.5px;font-weight:400;margin-left:auto}
 .tree a.edited .ln::after{content:" •";color:var(--accent)}
 main{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0}
@@ -97,9 +97,9 @@ svg .sel-outline{fill:none;stroke:var(--accent);stroke-width:2;
                  stroke-dasharray:5 3;pointer-events:none}
 svg .handle{fill:#fff;stroke:var(--accent);stroke-width:1.6;cursor:pointer}
 svg .handle.mid{fill:var(--accent-soft)}
-svg .handle.bound{fill:#2f9e44;stroke:#237032}
-svg .guide{stroke:#e8590c;stroke-width:1;stroke-dasharray:4 3;pointer-events:none}
-svg .marquee{fill:rgba(47,111,208,.10);stroke:var(--accent);stroke-width:1;
+svg .handle.bound{fill:#555555;stroke:#333333}
+svg .guide{stroke:#555555;stroke-width:1;stroke-dasharray:4 3;pointer-events:none}
+svg .marquee{fill:rgba(0,0,0,.10);stroke:var(--accent);stroke-width:1;
              stroke-dasharray:4 3;pointer-events:none}
 .insp h3{margin:0 0 6px;font-size:12px;letter-spacing:.05em;text-transform:uppercase;
          color:var(--muted)}
@@ -207,26 +207,21 @@ body.nav-open .scrim,body.more-open .scrim{display:block}
 
 JS_CORE = r"""
 'use strict';
-const FS=13, LH=17, PADX=14, PADY=10, MINW=128, MINH=44, RATIO=.6, LBL=12;
-const MARGIN=26, TITLE_H=34, ARROW_LEN=9, ARROW_HALF=3.6, GRID=5, PAD=60;
-const STUB=20, CORNER=6;
-const MONO="Consolas, 'Cascadia Mono', 'DejaVu Sans Mono', 'Courier New', monospace";
-const UI="Segoe UI, 'Noto Sans', Arial, sans-serif";
-/* chart palettes, kept in sync with blockwright/render.py */
-const THEMES={
-  light:{stroke:"#1f2933",ink:"#10151b",bg:"#ffffff",
-         fill:{process:"#ffffff",io:"#eef4ff",decision:"#fff6e5",terminator:"#e9f3ec",
-               predefined:"#f3eefc",preparation:"#e8f5f1",connector:"#ffffff"}},
-  dark:{stroke:"#9aa4b2",ink:"#e9eef5",bg:"#11161d",
-        fill:{process:"#1a212b",io:"#152436",decision:"#2c2517",terminator:"#152a20",
-              predefined:"#231d33",preparation:"#14271f",connector:"#1a212b"}}};
+const FS=44/3, LH=18, PADX=14, PADY=8, MINW=128, MINH=34, RATIO=.6, LBL=12;
+const MARGIN=12, TITLE_H=34, ARROW_LEN=9, ARROW_HALF=3.6, GRID=5, PAD=60;
+const STUB=20, CORNER=0;
+const MONO="Times New Roman, Liberation Serif, Times, serif";
+const UI=MONO;
+/* Цвет интерфейса не меняет печатные цвета схемы. */
+const PAPER={stroke:"#000000",ink:"#000000",bg:"#ffffff",fill:{}};
+const THEMES={light:PAPER,dark:PAPER};
 let THEME='light';
 const TH=()=>THEMES[THEME]||THEMES.light;
-const KIND_RU={process:"Процесс",io:"ВводВывод",decision:"Решение",
+const KIND_RU={process:"Процесс",io:"ВводВывод",input:"Ввод",output:"Вывод",decision:"Решение",
                terminator:"Терминатор",predefined:"Подпрограмма",
                preparation:"Цикл",connector:"Соединитель"};
-const KINDS=["terminator","process","io","decision","predefined","preparation","connector"];
-const STORE='blockwright.v1';
+const KINDS=["terminator","process","input","output","io","decision","predefined","preparation","connector"];
+const STORE='blockwright.cpp.v1';
 
 /* ---------- i18n ---------- */
 const I18N={
@@ -246,12 +241,12 @@ const I18N={
   b_more_t:"Экспорт и настройки", b_close:"Закрыть",
   z_out:"Уменьшить", z_in:"Увеличить", z_fit:"Вписать",
   cap_title:"заголовок", cap_title_t:"Добавлять заголовок в экспортируемый файл",
-  kind_terminator:"Начало / конец", kind_process:"Процесс", kind_io:"Ввод-вывод",
+  kind_terminator:"Начало / конец", kind_process:"Процесс", kind_io:"Данные", kind_input:"Ввод", kind_output:"Вывод",
   kind_decision:"Решение", kind_predefined:"Предопределённый процесс",
   kind_preparation:"Подготовка (цикл)", kind_connector:"Соединитель",
   t_select:"Выбор и перемещение  (V)", t_connect:"Связь: щёлкните источник, затем приёмник  (C)",
   t_label:"Подпись  (T)",
-  t_terminator:"Начало / конец  (1)", t_process:"Процесс  (2)", t_io:"Ввод-вывод  (3)",
+  t_terminator:"Начало / конец  (1)", t_process:"Процесс  (2)", t_io:"Данные", t_input:"Ввод  (3)", t_output:"Вывод  (4)",
   t_decision:"Решение  (4)", t_predefined:"Предопределённый процесс  (5)",
   t_preparation:"Подготовка / цикл  (6)", t_connector:"Соединитель  (7)",
   i_type:"Тип блока", i_text:"Текст", i_apply:"Применить", i_fit:"По тексту",
@@ -297,12 +292,12 @@ const I18N={
   b_more_t:"Export and settings", b_close:"Close",
   z_out:"Zoom out", z_in:"Zoom in", z_fit:"Fit",
   cap_title:"title", cap_title_t:"Include the title in the exported file",
-  kind_terminator:"Terminator", kind_process:"Process", kind_io:"Input / output",
+  kind_terminator:"Terminator", kind_process:"Process", kind_io:"Data", kind_input:"Input", kind_output:"Output",
   kind_decision:"Decision", kind_predefined:"Predefined process",
   kind_preparation:"Preparation (loop)", kind_connector:"Connector",
   t_select:"Select and move  (V)", t_connect:"Connector: click source, then target  (C)",
   t_label:"Label  (T)",
-  t_terminator:"Terminator  (1)", t_process:"Process  (2)", t_io:"Input / output  (3)",
+  t_terminator:"Terminator  (1)", t_process:"Process  (2)", t_io:"Data", t_input:"Input  (3)", t_output:"Output  (4)",
   t_decision:"Decision  (4)", t_predefined:"Predefined process  (5)",
   t_preparation:"Preparation / loop  (6)", t_connector:"Connector  (7)",
   i_type:"Block type", i_text:"Text", i_apply:"Apply", i_fit:"Fit to text",
@@ -367,16 +362,22 @@ function wrap(text,w){
 }
 const r2=v=>Math.round(v*100)/100;
 const n=v=>v.toFixed(2).replace(/\.?0+$/,'');
-function sizeFor(kind,text,maxChars){
+let textContext;
+function textWidth(text,size){
+  if(!textContext)textContext=document.createElement('canvas').getContext('2d');
+  textContext.font=size+'px '+MONO;
+  return textContext.measureText(text).width;
+}
+function sizeFor(kind,text,maxChars,notation){
   const lines=wrap(text,maxChars);
-  const tw=Math.max(...lines.map(l=>l.length))*FS*RATIO, th=lines.length*LH;
+  const tw=Math.max(...lines.map(l=>textWidth(l,FS))), th=lines.length*LH;
   let w,h;
   if(kind==='connector'){const d=Math.max(40,tw+16,th+16);w=d;h=d;}
-  else if(kind==='decision'){h=Math.max(58,th*2+18);w=Math.max(150,tw*1.75+28);}
+  else if(kind==='decision'){h=Math.max(54,th*2+16);w=Math.max(150,tw*1.75+28);}
   else if(kind==='preparation'){h=Math.max(MINH,th+2*PADY);w=Math.max(MINW,tw+2*PADX+h*.8);}
-  else if(kind==='io'){h=Math.max(MINH,th+2*PADY);w=Math.max(MINW,tw+2*PADX+h*.5);}
+  else if(kind==='io'||kind==='input'||kind==='output'){h=Math.max(MINH,th+2*PADY);w=Math.max(MINW,tw+2*PADX+h*.5);}
   else if(kind==='predefined'){h=Math.max(MINH,th+2*PADY);w=Math.max(MINW,tw+2*PADX+28);}
-  else if(kind==='terminator'){h=Math.max(42,th+2*PADY-2);w=Math.max(MINW,tw+2*PADX+h*.6);}
+  else if(kind==='terminator'){h=Math.max(34,th+2*PADY-2);w=Math.max(MINW,tw+2*PADX+h*.6);}
   else{h=Math.max(MINH,th+2*PADY);w=Math.max(MINW,tw+2*PADX);}
   return{w:r2(w),h:r2(h),lines};
 }
@@ -389,13 +390,29 @@ function slug(t,lim){lim=lim||28;
 let _uid=0; const uid=p=>p+'_'+(Date.now()%100000).toString(36)+(_uid++).toString(36);
 const clone=o=>JSON.parse(JSON.stringify(o));
 
+function flowPorts(s,outgoing){
+  if(s.kind==='connector'&&s.flow==='up')return outgoing?['right']:['left'];
+  if(s.kind==='terminator'){
+    if(s.role==='start'&&!outgoing)return[];
+    if(s.role==='end'&&outgoing)return[];
+  }
+  return outgoing?(s.kind==='decision'?['bottom','right']:['bottom']):['top'];
+}
+function contourPorts(s){
+  const isData=s.kind==='io'||s.kind==='input'||(s.kind==='output'&&s.notation==='gost');
+  const inset=isData?Math.min(s.h*.34,s.w*.3)/2:0;
+  return {top:[s.x+s.w/2,s.y],
+    bottom:[s.x+s.w/2,s.y+s.h*((s.kind==='output'&&(s.notation||'course')==='course')?.9425:1)],
+    left:[s.x+inset,s.y+s.h/2],right:[s.x+s.w-inset,s.y+s.h/2]};
+}
+
 /* ---------- rendering ---------- */
 function bbox(m){
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
   const put=(x,y)=>{if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;};
   for(const s of m.shapes){put(s.x,s.y);put(s.x+s.w,s.y+s.h);}
   for(const e of m.edges)for(const p of e.points)put(p[0],p[1]);
-  for(const l of m.labels){const w=l.text.length*LBL*.6;
+  for(const l of m.labels){const w=textWidth(l.text,LBL);
     if(l.anchor==='start'){put(l.x,l.y);put(l.x+w,l.y);}
     else if(l.anchor==='end'){put(l.x-w,l.y);put(l.x,l.y);}
     else{put(l.x-w/2,l.y);put(l.x+w/2,l.y);}
@@ -408,7 +425,8 @@ function outline(s){
   const st=`fill="${TH().fill[k]||TH().bg}" stroke="${TH().stroke}" stroke-width="1.6"`;
   if(k==='terminator')return[`<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" rx="${n(h/2)}" ry="${n(h/2)}" ${st}/>`];
   if(k==='decision')return[`<polygon points="${n(x+w/2)},${n(y)} ${n(x+w)},${n(y+h/2)} ${n(x+w/2)},${n(y+h)} ${n(x)},${n(y+h/2)}" ${st}/>`];
-  if(k==='io'){const s2=Math.min(h*.34,w*.3);
+  if(k==='output'&&(s.notation||'course')==='course')return[`<path d="M${n(x)},${n(y)} L${n(x+w)},${n(y)} L${n(x+w)},${n(y+.8*h)} C${n(x+2*w/3)},${n(y+.78*h)} ${n(x+w/3)},${n(y+1.16*h)} ${n(x)},${n(y+.92*h)} Z" ${st}/>`];
+  if(k==='io'||k==='input'||k==='output'){const s2=Math.min(h*.34,w*.3);
     return[`<polygon points="${n(x+s2)},${n(y)} ${n(x+w)},${n(y)} ${n(x+w-s2)},${n(y+h)} ${n(x)},${n(y+h)}" ${st}/>`];}
   if(k==='preparation'){const c=Math.min(h*.5,w*.25);
     return[`<polygon points="${n(x+c)},${n(y)} ${n(x+w-c)},${n(y)} ${n(x+w)},${n(y+h/2)} ${n(x+w-c)},${n(y+h)} ${n(x+c)},${n(y+h)} ${n(x)},${n(y+h/2)}" ${st}/>`];}
@@ -416,11 +434,11 @@ function outline(s){
     for(const dx of[11,w-11])o.push(`<line x1="${n(x+dx)}" y1="${n(y)}" x2="${n(x+dx)}" y2="${n(y+h)}" stroke="${TH().stroke}" stroke-width="1.4"/>`);
     return o;}
   if(k==='connector')return[`<circle cx="${n(x+w/2)}" cy="${n(y+h/2)}" r="${n(Math.min(w,h)/2)}" ${st}/>`];
-  return[`<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" rx="2" ry="2" ${st}/>`];
+  return[`<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" ${st}/>`];
 }
 function shapeText(s,maxChars){
-  const lines=wrap(s.text,maxChars);
-  const cx=s.x+s.w/2, cy=s.y+s.h/2, y0=cy-(lines.length-1)*LH/2+FS*.36;
+  const lines=s.lines||wrap(s.text,maxChars);
+  const cx=s.x+s.w/2, cy=s.y+s.h*((s.kind==='output'&&(s.notation||'course')==='course')?.43:.5), y0=cy-(lines.length-1)*LH/2+FS*.36;
   return lines.map((ln,i)=>`<text x="${n(cx)}" y="${n(y0+i*LH)}" text-anchor="middle" font-family="${MONO}" font-size="${FS}" fill="${TH().ink}">${esc(ln)}</text>`);
 }
 function cleanPts(pts){
@@ -450,6 +468,13 @@ function edgeSvg(e){
   if(e.points.length<2)return[];
   let pts=cleanPts(e.points); if(pts.length<2)return[];
   const out=[];
+  for(let i=1;i<pts.length;i++){
+    const [ax,ay]=pts[i-1],[bx,by]=pts[i];
+    if(ay-by>35&&Math.abs(ax-bx)<.01){const my=(ay+by)/2;
+      out.push(`<path d="M${n(ax)},${n(my)} L${n(ax-ARROW_HALF)},${n(my+ARROW_LEN)} L${n(ax+ARROW_HALF)},${n(my+ARROW_LEN)} Z" fill="${TH().stroke}"/>`);}
+    if(ax-bx>35&&Math.abs(ay-by)<.01){const mx=(ax+bx)/2;
+      out.push(`<path d="M${n(mx)},${n(ay)} L${n(mx+ARROW_LEN)},${n(ay-ARROW_HALF)} L${n(mx+ARROW_LEN)},${n(ay+ARROW_HALF)} Z" fill="${TH().stroke}"/>`);}
+  }
   if(e.arrow!==false){
     const a=pts[pts.length-2],b=pts[pts.length-1];
     const dx=b[0]-a[0],dy=b[1]-a[1],L=Math.hypot(dx,dy)||1;
@@ -498,8 +523,7 @@ function renderSVG(m,opt){
 }
 
 /* ---------- model: attachments and routes ---------- */
-function anchors(s){return{top:[s.x+s.w/2,s.y],bottom:[s.x+s.w/2,s.y+s.h],
-  left:[s.x,s.y+s.h/2],right:[s.x+s.w,s.y+s.h/2]};}
+function anchors(s){return contourPorts(s);}
 function anchorPt(m,ref){
   const s=m.shapes.find(x=>x.id===ref.id); if(!s)return null;
   return anchors(s)[ref.port]||null;
@@ -507,7 +531,8 @@ function anchorPt(m,ref){
 function hydrate(m){
   m.maxChars=m.maxChars||38;
   m.shapes=m.shapes||[];m.edges=m.edges||[];m.labels=m.labels||[];
-  for(const s of m.shapes)if(!s.id)s.id=uid('s');
+  m.notation=m.notation||'course';
+  for(const s of m.shapes){if(!s.id)s.id=uid('s');s.notation=s.notation||m.notation;}
   for(const l of m.labels){
     if(!l.id)l.id=uid('l');
     if(l.near===undefined)l.near=nearestAnchor(m,l);
@@ -515,8 +540,8 @@ function hydrate(m){
   for(const e of m.edges){
     if(!e.id)e.id=uid('e');
     if(e.arrow===undefined)e.arrow=true;
-    if(e.from===undefined)e.from=findAnchor(m,e.points[0]);
-    if(e.to===undefined)e.to=e.arrow?findAnchor(m,e.points[e.points.length-1]):null;
+    if(e.from===undefined)e.from=findAnchor(m,e.points[0],3,true);
+    if(e.to===undefined)e.to=e.arrow?findAnchor(m,e.points[e.points.length-1],3,false):null;
   }
   return m;
 }
@@ -532,11 +557,11 @@ function nearestAnchor(m,l){
   }
   return best;
 }
-function findAnchor(m,pt,tol){
+function findAnchor(m,pt,tol,outgoing){
   tol=tol||3; let best=null,bd=tol;
   for(const s of m.shapes){
     const a=anchors(s);
-    for(const port of['top','bottom','left','right']){
+    for(const port of flowPorts(s,!!outgoing)){
       const d=Math.hypot(a[port][0]-pt[0],a[port][1]-pt[1]);
       if(d<=bd){bd=d;best={id:s.id,port};}
     }
@@ -741,13 +766,14 @@ function avRoute(m,reqs,buf){
       const ref=new A.ShapeRef(R,T(new A.Rectangle(T(new A.Point(s.x,s.y)),
                                                    T(new A.Point(s.x+s.w,s.y+s.h)))));
       for(const port of PORTS){
-        const[px,py,dir]=PIN[port];
+        const point=anchors(s)[port], dir=PIN[port][2];
+        const px=(point[0]-s.x)/s.w, py=(point[1]-s.y)/s.h;
         const pin=(cls,cost)=>{const p=new A.ShapeConnectionPin(ref,cls,px,py,true,0,dir);
           p.setExclusive(false); if(cost)p.setConnectionCost(cost);};
         pin(CLS[port],0);
         if(!multi)continue;
-        if(port!=='top')pin(CLS.out,port==='bottom'?0:AV_SIDE);
-        if(port!=='bottom')pin(CLS.in,port==='top'?0:AV_SIDE);
+        if(flowPorts(s,true).includes(port))pin(CLS.out,port==='bottom'?0:AV_SIDE);
+        if(flowPorts(s,false).includes(port))pin(CLS.in,port==='top'?0:AV_SIDE);
       }
       refs[s.id]=ref;
     }
@@ -789,6 +815,8 @@ function avRun(m,reqs,buf){
 function endsOf(m,e,mode){
   const P=e.points, S=id=>m.shapes.find(s=>s.id===id);
   let fp=e.from&&e.from.port, tp=e.to&&e.to.port;
+  if(e.from&&S(e.from.id)&&!flowPorts(S(e.from.id),true).includes(fp))fp=flowPorts(S(e.from.id),true)[0]||'bottom';
+  if(e.to&&S(e.to.id)&&!flowPorts(S(e.to.id),false).includes(tp))tp=flowPorts(S(e.to.id),false)[0]||'top';
   if(mode==='guess'&&e.from&&e.to&&S(e.from.id)&&S(e.to.id)){
     const r=autoRoute(m,S(e.from.id),S(e.to.id));
     if(S(e.from.id).kind!=='decision')fp=r.from;
@@ -913,6 +941,13 @@ function rerouteEdge(m,e,fresh){
 }
 function autoRoute(m,a,b){
   const A=anchors(a),B=anchors(b);
+  if(a.flow==='up'||b.flow==='up'){
+    const from=flowPorts(a,true)[0]||'bottom',to=flowPorts(b,false)[0]||'top';
+    const p=A[from],q=B[to],N=NORMAL;
+    const u=[p[0]+N[from][0]*STUB,p[1]+N[from][1]*STUB];
+    const v=[q[0]+N[to][0]*STUB,q[1]+N[to][1]*STUB];
+    return {pts:[p,u,[u[0],v[1]],v,q],from,to};
+  }
   if(b.y>a.y+a.h-2){
     const mid=r2((a.y+a.h+b.y)/2);
     if(Math.abs(A.bottom[0]-B.top[0])<2)return{pts:[A.bottom,B.top],from:'bottom',to:'top'};
@@ -923,11 +958,10 @@ function autoRoute(m,a,b){
     return{pts:[A.bottom,[A.bottom[0],y1],[side,y1],[side,y2],[B.top[0],y2],B.top],
            from:'bottom',to:'top'};
   }
-  const right=b.x>a.x;
-  const p1=right?A.right:A.left, p2=right?B.left:B.right;
-  const mx=r2((p1[0]+p2[0])/2);
-  return{pts:[p1,[mx,p1[1]],[mx,p2[1]],p2],from:right?'right':'left',
-         to:right?'left':'right'};
+  const from=a.kind==='decision'?'right':'bottom';
+  const p1=A[from], p2=B.top, lane=r2(Math.max(a.x+a.w,b.x+b.w)+34);
+  const first=from==='right'?[lane,p1[1]]:[p1[0],a.y+a.h+STUB];
+  return{pts:[p1,first,[lane,first[1]],[lane,b.y-STUB],[p2[0],b.y-STUB],p2],from,to:'top'};
 }
 /* cut the chart horizontally and push the lower part down after a block grew */
 function shiftBelow(m,threshold,delta){
@@ -939,13 +973,13 @@ function shiftBelow(m,threshold,delta){
 }
 function newShape(kind,x,y,text,maxChars){
   const g=sizeFor(kind,text,maxChars||38);
-  return{id:uid('s'),kind,text,x:r2(x-g.w/2),y:r2(y-g.h/2),w:g.w,h:g.h};
+  return{id:uid('s'),kind,text,notation:'course',lines:g.lines,x:r2(x-g.w/2),y:r2(y-g.h/2),w:g.w,h:g.h};
 }
 function emptyDoc(name){
   const m={name,rel:'мои схемы',signature:'',line:0,maxChars:38,
            shapes:[],edges:[],labels:[]};
-  const a=newShape('terminator',300,80,'Начало',38);
-  const b=newShape('terminator',300,320,'Конец',38);
+  const a=newShape('terminator',300,80,'Начало',38);a.role='start';
+  const b=newShape('terminator',300,320,'Конец',38);b.role='end';
   m.shapes.push(a,b);
   const r=autoRoute(m,a,b);
   m.edges.push({id:uid('e'),points:r.pts.map(p=>[r2(p[0]),r2(p[1])]),arrow:true,
@@ -958,7 +992,7 @@ JS_APP = r"""
 /* ---------- state ---------- */
 const $=s=>document.querySelector(s);
 let docs={}, custom=[], dirty=new Set(), names={}, cur=null, view=null, zoom=1;
-let exportTitle=true;
+let exportTitle=false;
 let sel={shapes:new Set(),edges:new Set(),labels:new Set()};
 let tool='select', hist=[], future=[], drag=null, pending=null, guides=[];
 
@@ -1076,7 +1110,7 @@ function drawUI(){
   }
   for(const id of sel.labels){
     const l=m.labels.find(x=>x.id===id); if(!l)continue;
-    const w=l.text.length*LBL*.6;
+    const w=textWidth(l.text,LBL);
     const x=l.anchor==='start'?l.x:(l.anchor==='end'?l.x-w:l.x-w/2);
     parts.push(`<rect class="sel-outline" x="${n(x-3)}" y="${n(l.y-LBL-2)}" width="${n(w+6)}" height="${n(LBL+7)}" rx="2"/>`);
   }
@@ -1131,6 +1165,7 @@ function onDown(ev){
     push(); const kind=tool.slice(4);
     const s=newShape(kind,snap(p[0],ev.altKey),snap(p[1],ev.altKey),
                      kind==='decision'?'условие':'действие',m.maxChars);
+    s.notation=m.notation||'course';
     m.shapes.push(s); selectOnly('shapes',s.id); setTool('select'); commit(); return;
   }
   if(tool==='label'){
@@ -1141,7 +1176,7 @@ function onDown(ev){
     const s=hitShape(m,p);
     if(!s){pending=null;drawUI();return;}
     if(!pending){pending={shape:s,at:p};drawUI();return;}
-    if(pending.shape.id!==s.id){
+    if(pending.shape.id!==s.id&&flowPorts(pending.shape,true).length&&flowPorts(s,false).length){
       push(); const r=autoRoute(m,pending.shape,s);
       const e={id:uid('e'),points:r.pts.map(q=>[r2(q[0]),r2(q[1])]),arrow:true,
         from:{id:pending.shape.id,port:r.from},to:{id:s.id,port:r.to}};
@@ -1293,7 +1328,9 @@ function onUp(ev){
       if(s){
         const A=anchors(s), p=e.points[drag.idx];
         let best='top',bd=1e9;
-        for(const port of['top','bottom','left','right']){
+        const ports=flowPorts(s,drag.idx===0);
+        if(!ports.length){guides=[];drag=null;commit();return;}
+        for(const port of ports){
           const d=Math.hypot(A[port][0]-p[0],A[port][1]-p[1]);
           if(d<bd){bd=d;best=port;}
         }
@@ -1357,7 +1394,8 @@ function nudge(dx,dy){
 }
 function fitShape(id){
   const m=model(), s=m.shapes.find(x=>x.id===id); if(!s)return;
-  const g=sizeFor(s.kind,s.text,m.maxChars);
+  const g=sizeFor(s.kind,s.text,m.maxChars,s.notation);
+  s.lines=g.lines;
   const cx=s.x+s.w/2;
   s.x=r2(cx-g.w/2); s.w=g.w; s.h=g.h; syncEdges(m,[s.id]);
 }
@@ -1693,33 +1731,56 @@ ICONS = {
     "terminator": '<rect x="3" y="7" width="20" height="12" rx="6"/>',
     "process": '<rect x="3" y="7" width="20" height="12"/>',
     "io": '<polygon points="7,7 23,7 19,19 3,19"/>',
+    "input": '<polygon points="7,7 23,7 19,19 3,19"/>',
+    "output": '<path d="M3 6 H23 V17 C17 16 10 23 3 19 Z"/>',
     "decision": '<polygon points="13,5 23,13 13,21 3,13"/>',
     "predefined": '<rect x="3" y="7" width="20" height="12"/>'
-                  '<line x1="7" y1="7" x2="7" y2="19"/><line x1="19" y1="7" x2="19" y2="19"/>',
+    '<line x1="7" y1="7" x2="7" y2="19"/><line x1="19" y1="7" x2="19" y2="19"/>',
     "preparation": '<polygon points="7,7 19,7 23,13 19,19 7,19 3,13"/>',
     "connector": '<circle cx="13" cy="13" r="7"/>',
 }
-KINDS = ("terminator", "process", "io", "decision", "predefined",
-         "preparation", "connector")
+KINDS = (
+    "terminator",
+    "process",
+    "input",
+    "output",
+    "io",
+    "decision",
+    "predefined",
+    "preparation",
+    "connector",
+)
 
 
 def _palette():
     """Palette buttons; applyLang() fills in their titles."""
-    ico = ('<svg width="26" height="26" viewBox="0 0 26 26" fill="none" '
-           'stroke="currentColor" stroke-width="1.6">')
-    out = [f'<button data-tool="select" class="on" data-i18n-title="t_select">{ico}'
-           '<path d="M7 4 L7 20 L11 16 L14 22 L16 21 L13 15 L19 15 Z" '
-           'fill="var(--panel)"/></svg></button>',
-           f'<button data-tool="connect" data-i18n-title="t_connect">{ico}'
-           '<path d="M5 6 H15 V19"/><path d="M12 16 L15 20 L18 16 Z" '
-           'fill="currentColor"/></svg></button>',
-           f'<button data-tool="label" data-i18n-title="t_label">{ico}'
-           '<path d="M6 8 H20 M13 8 V19" stroke-width="1.8"/></svg></button>',
-           '<div class="gap"></div>']
+    ico = (
+        '<svg width="26" height="26" viewBox="0 0 26 26" fill="none" '
+        'stroke="currentColor" stroke-width="1.6">'
+    )
+    out = [
+        (
+            f'<button data-tool="select" class="on" data-i18n-title="t_select">{ico}'
+            '<path d="M7 4 L7 20 L11 16 L14 22 L16 21 L13 15 L19 15 Z" '
+            'fill="var(--panel)"/></svg></button>'
+        ),
+        (
+            f'<button data-tool="connect" data-i18n-title="t_connect">{ico}'
+            '<path d="M5 6 H15 V19"/><path d="M12 16 L15 20 L18 16 Z" '
+            'fill="currentColor"/></svg></button>'
+        ),
+        (
+            f'<button data-tool="label" data-i18n-title="t_label">{ico}'
+            '<path d="M6 8 H20 M13 8 V19" stroke-width="1.8"/></svg></button>'
+        ),
+        '<div class="gap"></div>',
+    ]
     for kind in KINDS:
-        out.append(f'<button data-tool="add:{kind}" data-i18n-title="t_{kind}">'
-                   f'<svg width="26" height="26" viewBox="0 0 26 26" fill="var(--panel)" '
-                   f'stroke="currentColor" stroke-width="1.6">{ICONS[kind]}</svg></button>')
+        out.append(
+            f'<button data-tool="add:{kind}" data-i18n-title="t_{kind}">'
+            f'<svg width="26" height="26" viewBox="0 0 26 26" fill="var(--panel)" '
+            f'stroke="currentColor" stroke-width="1.6">{ICONS[kind]}</svg></button>'
+        )
     return "".join(out)
 
 
@@ -1737,15 +1798,16 @@ def _router_scripts():
         js = fh.read().replace("</", "<\\/")
     with open(wasm_path, "rb") as fh:
         wasm = base64.b64encode(fh.read()).decode("ascii")
-    return (f"<script>{js}</script>\n"
-            f'<script>const AVOID_WASM="{wasm}";</script>\n')
+    return f'<script>{js}</script>\n<script>const AVOID_WASM="{wasm}";</script>\n'
 
 
 def render_html(entries, title="Блок-схемы", folder="", lang="ru", theme="light"):
     """entries: dicts with rel, name, signature, line, anchor and model."""
-    payload = json.dumps({"folder": folder or title, "items": entries,
-                          "lang": lang, "theme": theme},
-                         ensure_ascii=False, separators=(",", ":"))
+    payload = json.dumps(
+        {"folder": folder or title, "items": entries, "lang": lang, "theme": theme},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     payload = payload.replace("</", "<\\/")
     return f"""<!DOCTYPE html>
 <html lang="{lang}"><head><meta charset="utf-8">

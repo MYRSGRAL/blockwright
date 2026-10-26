@@ -4,9 +4,11 @@ Output is ANSI escape codes, input comes from msvcrt on Windows and termios
 elsewhere. Mouse reporting is enabled when the terminal supports it.
 """
 
+import logging
 import os
 import shutil
 import sys
+from typing import ClassVar
 
 from . import parse as P
 from . import project
@@ -54,50 +56,88 @@ IO_STYLES = ["pretty", "list", "code"]
 RET_STYLES = ["auto", "value", "end"]
 PNG_SCALES = [0, 1, 2, 3, 4]
 
-DEFAULTS = {"for_style": "auto", "io_style": "pretty", "return_style": "auto",
-            "width": 38, "png": 0, "keep_std": False, "ui_lang": "ru"}
+DEFAULTS = {
+    "for_style": "decision",
+    "io_style": "pretty",
+    "return_style": "auto",
+    "width": 38,
+    "png": 0,
+    "keep_std": False,
+    "ui_lang": "ru",
+}
 
 # -------------------------------------------------------------------- i18n
 L10N = {
     "ru": {
         "title": "  Блок-схемы по исходному коду   ·   выбор исходников",
-        "folder": "Папка:", "marked": "отмечено файлов: {0}",
-        "files": "ФАЙЛЫ И ПАПКИ", "funcs": "ФУНКЦИИ  {0} из {1}",
-        "up": "на уровень выше", "settings": "Настройки",
-        "o_for": "цикл for", "o_io": "ввод-вывод", "o_ret": "return",
-        "o_width": "ширина текста", "o_png": "растр PNG", "o_std": "префикс std::",
-        "for_auto": "как в коде", "for_hexagon": "шестиугольник",
+        "folder": "Папка:",
+        "marked": "отмечено файлов: {0}",
+        "files": "ФАЙЛЫ И ПАПКИ",
+        "funcs": "ФУНКЦИИ  {0} из {1}",
+        "up": "на уровень выше",
+        "settings": "Настройки",
+        "o_for": "цикл for",
+        "o_io": "ввод-вывод",
+        "o_ret": "return",
+        "o_width": "ширина текста",
+        "o_png": "растр PNG",
+        "o_std": "префикс std::",
+        "for_auto": "как в коде",
+        "for_hexagon": "шестиугольник",
         "for_decision": "через условие",
-        "io_pretty": "связной фразой", "io_list": "перечислением", "io_code": "как в коде",
-        "ret_auto": "авто", "ret_value": "всегда «Возврат»", "ret_end": "всегда «Конец»",
-        "png_off": "не делать", "std_keep": "оставить", "std_drop": "убирать",
+        "io_pretty": "связной фразой",
+        "io_list": "перечислением",
+        "io_code": "как в коде",
+        "ret_auto": "авто",
+        "ret_value": "всегда «Возврат»",
+        "ret_end": "всегда «Конец»",
+        "png_off": "не делать",
+        "std_keep": "оставить",
+        "std_drop": "убирать",
         "hint": "{k}↑↓{r} выбор  {k}Space{r} отметить  {k}→{r} в папку  {k}←{r} наверх  "
-                "{k}Tab{r} панель  {k}a/n{r} все/снять  {k}/{r} поиск  {k}l{r} язык  "
-                "{k}Enter{r} ПОСТРОИТЬ  {k}q{r} выход",
+        "{k}Tab{r} панель  {k}a/n{r} все/снять  {k}/{r} поиск  {k}l{r} язык  "
+        "{k}Enter{r} ПОСТРОИТЬ  {k}q{r} выход",
         "hint_short": "{k}↑↓{r} {k}Space{r} {k}←→{r} {k}Tab{r}  {k}Enter{r} построить  "
-                      "{k}q{r} выход",
-        "filter": "Фильтр:", "filter_hint": "Enter — применить, Esc — сбросить",
+        "{k}q{r} выход",
+        "filter": "Фильтр:",
+        "filter_hint": "Enter — применить, Esc — сбросить",
         "no_files": "Не отмечено ни одного файла — нажмите Space",
         "no_funcs": "Все функции выключены",
         "press_any": "Нажмите любую клавишу…",
     },
     "en": {
         "title": "  Flowcharts from source code   ·   pick the sources",
-        "folder": "Folder:", "marked": "files selected: {0}",
-        "files": "FILES AND FOLDERS", "funcs": "FUNCTIONS  {0} of {1}",
-        "up": "one level up", "settings": "Settings",
-        "o_for": "for loop", "o_io": "input/output", "o_ret": "return",
-        "o_width": "text width", "o_png": "PNG raster", "o_std": "std:: prefix",
-        "for_auto": "as in code", "for_hexagon": "hexagon", "for_decision": "as a decision",
-        "io_pretty": "as a sentence", "io_list": "as a list", "io_code": "as in code",
-        "ret_auto": "auto", "ret_value": "always “Return”", "ret_end": "always “End”",
-        "png_off": "skip", "std_keep": "keep", "std_drop": "strip",
+        "folder": "Folder:",
+        "marked": "files selected: {0}",
+        "files": "FILES AND FOLDERS",
+        "funcs": "FUNCTIONS  {0} of {1}",
+        "up": "one level up",
+        "settings": "Settings",
+        "o_for": "for loop",
+        "o_io": "input/output",
+        "o_ret": "return",
+        "o_width": "text width",
+        "o_png": "PNG raster",
+        "o_std": "std:: prefix",
+        "for_auto": "as in code",
+        "for_hexagon": "hexagon",
+        "for_decision": "as a decision",
+        "io_pretty": "as a sentence",
+        "io_list": "as a list",
+        "io_code": "as in code",
+        "ret_auto": "auto",
+        "ret_value": "always “Return”",
+        "ret_end": "always “End”",
+        "png_off": "skip",
+        "std_keep": "keep",
+        "std_drop": "strip",
         "hint": "{k}↑↓{r} move  {k}Space{r} mark  {k}→{r} enter  {k}←{r} up  "
-                "{k}Tab{r} panel  {k}a/n{r} all/none  {k}/{r} filter  {k}l{r} language  "
-                "{k}Enter{r} BUILD  {k}q{r} quit",
+        "{k}Tab{r} panel  {k}a/n{r} all/none  {k}/{r} filter  {k}l{r} language  "
+        "{k}Enter{r} BUILD  {k}q{r} quit",
         "hint_short": "{k}↑↓{r} {k}Space{r} {k}←→{r} {k}Tab{r}  {k}Enter{r} build  "
-                      "{k}q{r} quit",
-        "filter": "Filter:", "filter_hint": "Enter — apply, Esc — clear",
+        "{k}q{r} quit",
+        "filter": "Filter:",
+        "filter_hint": "Enter — apply, Esc — clear",
         "no_files": "No files selected — press Space",
         "no_funcs": "All functions are switched off",
         "press_any": "Press any key…",
@@ -119,6 +159,7 @@ def enable_vt():
         return True
     try:
         import ctypes
+
         k = ctypes.windll.kernel32
         for handle, flag in ((-11, 0x0004), (-10, 0x0200)):
             h = k.GetStdHandle(handle)
@@ -140,6 +181,7 @@ class Input:
         if not IS_WIN:
             import termios
             import tty
+
             self._fd = sys.stdin.fileno()
             self._saved = termios.tcgetattr(self._fd)
             tty.setcbreak(self._fd)
@@ -152,26 +194,51 @@ class Input:
         sys.stdout.flush()
         if self._saved is not None:
             import termios
+
             termios.tcsetattr(self._fd, termios.TCSADRAIN, self._saved)
 
     def _getch(self):
         if IS_WIN:
             import msvcrt
+
             return msvcrt.getwch()
         return sys.stdin.read(1)
 
     def _ready(self):
         if IS_WIN:
             import msvcrt
+
             return msvcrt.kbhit()
         import select
+
         return bool(select.select([sys.stdin], [], [], 0.03)[0])
 
-    _WIN = {"H": "up", "P": "down", "K": "left", "M": "right", "I": "pgup",
-            "Q": "pgdn", "G": "home", "O": "end", "S": "del"}
-    _CSI = {"A": "up", "B": "down", "C": "right", "D": "left",
-            "H": "home", "F": "end"}
-    _TILDE = {"5": "pgup", "6": "pgdn", "1": "home", "4": "end", "3": "del"}
+    _WIN: ClassVar[dict[str, str]] = {
+        "H": "up",
+        "P": "down",
+        "K": "left",
+        "M": "right",
+        "I": "pgup",
+        "Q": "pgdn",
+        "G": "home",
+        "O": "end",
+        "S": "del",
+    }
+    _CSI: ClassVar[dict[str, str]] = {
+        "A": "up",
+        "B": "down",
+        "C": "right",
+        "D": "left",
+        "H": "home",
+        "F": "end",
+    }
+    _TILDE: ClassVar[dict[str, str]] = {
+        "5": "pgup",
+        "6": "pgdn",
+        "1": "home",
+        "4": "end",
+        "3": "del",
+    }
 
     def read(self):
         ch = self._getch()
@@ -231,7 +298,7 @@ def fit(s, width):
         if s[i] == "\x1b":
             j = s.find("m", i)
             j = len(s) - 1 if j < 0 else j
-            out.append(s[i:j + 1])
+            out.append(s[i : j + 1])
             i = j + 1
         else:
             out.append(s[i])
@@ -253,10 +320,10 @@ class Picker:
             self.cwd = os.path.dirname(self.cwd) or os.getcwd()
         self.cfg = cfg
         self.g = Glyphs(_unicode_ok())
-        self.marked = set()          # absolute paths of marked files
-        self.cache = {}              # path -> (mtime, [(name, line)])
+        self.marked = set()  # absolute paths of marked files
+        self.cache = {}  # path -> (mtime, [(name, line)])
         self.funcs = []
-        self.func_off = set()        # functions switched off, keyed rel::name
+        self.func_off = set()  # functions switched off, keyed rel::name
         self.panel = 0
         self.cur = [0, 0]
         self.top = [0, 0]
@@ -320,7 +387,7 @@ class Picker:
         except OSError:
             return []
         out = []
-        for info in (project.outline(source) if source is not None else []):
+        for info in project.outline(source) if source is not None else []:
             out.append((info["name"], info["line"]))
         self.cache[path] = (mtime, out)
         return out
@@ -334,8 +401,7 @@ class Picker:
             for name, line in self.file_funcs(path):
                 self.funcs.append((rel, name, line, rel + "::" + name))
         for panel in (0, 1):
-            self.cur[panel] = min(self.cur[panel],
-                                  max(0, len(self.items(panel)) - 1))
+            self.cur[panel] = min(self.cur[panel], max(0, len(self.items(panel)) - 1))
 
     def common_base(self):
         if not self.marked:
@@ -373,8 +439,20 @@ class Picker:
     def frame(self, out, row, width, text, kind):
         g = self.g
         if kind == "top":
-            out(row, DIM + g.tl + g.h * 2 + R + " " + text + " " +
-                DIM + g.h * max(0, width - plain_len(text) - 6) + g.tr + R)
+            out(
+                row,
+                DIM
+                + g.tl
+                + g.h * 2
+                + R
+                + " "
+                + text
+                + " "
+                + DIM
+                + g.h * max(0, width - plain_len(text) - 6)
+                + g.tr
+                + R,
+            )
         else:
             out(row, DIM + g.bl + g.h * (width - 2) + g.br + R)
 
@@ -391,8 +469,8 @@ class Picker:
 
         line(1, TITLE + pad(tr("title").replace("·", g.dot), W) + R)
         marked = len(self.marked)
-        info = f' {DIM}{tr("folder")}{R} {self.cwd}'
-        right = f'{ON}{tr("marked", marked)}{R}'
+        info = f" {DIM}{tr('folder')}{R} {self.cwd}"
+        right = f"{ON}{tr('marked', marked)}{R}"
         line(2, pad(info, W - plain_len(right) - 1) + right)
 
         two = W >= 100
@@ -407,8 +485,9 @@ class Picker:
         fns = self.visible_funcs()
         on = sum(1 for f in self.funcs if f[3] not in self.func_off)
         head_l = (HEAD if self.panel == 0 else DIM) + tr("files") + R
-        head_r = ((HEAD if self.panel == 1 else DIM) +
-                  tr("funcs", on, len(self.funcs)) + R)
+        head_r = (
+            (HEAD if self.panel == 1 else DIM) + tr("funcs", on, len(self.funcs)) + R
+        )
         line(body_top - 1, " " + pad(head_l, lw) + (("  " + head_r) if two else ""))
 
         self._scroll(0, body_h, len(ents))
@@ -416,20 +495,27 @@ class Picker:
         for i in range(body_h):
             row = body_top + i
             if two:
-                line(row, " " + pad(self._left(ents, i, lw - 1), lw - 1) + "  " +
-                     pad(self._right(fns, i, rw), rw))
+                line(
+                    row,
+                    " "
+                    + pad(self._left(ents, i, lw - 1), lw - 1)
+                    + "  "
+                    + pad(self._right(fns, i, rw), rw),
+                )
                 if self.top[0] + i < len(ents):
                     self.zones.append((row, 1, lw, 0, self.top[0] + i))
                 if self.top[1] + i < len(fns):
                     self.zones.append((row, rx, W, 1, self.top[1] + i))
             else:
                 src = ents if self.panel == 0 else fns
-                txt = (self._left(src, i, W - 2) if self.panel == 0
-                       else self._right(src, i, W - 2))
+                txt = (
+                    self._left(src, i, W - 2)
+                    if self.panel == 0
+                    else self._right(src, i, W - 2)
+                )
                 line(row, " " + txt)
                 if self.top[self.panel] + i < len(src):
-                    self.zones.append((row, 1, W, self.panel,
-                                       self.top[self.panel] + i))
+                    self.zones.append((row, 1, W, self.panel, self.top[self.panel] + i))
 
         c = self.cfg
         o_row = H - opts_h - 1
@@ -437,24 +523,36 @@ class Picker:
         col = (W - 2) // 2
 
         def opt(k, name, val):
-            return f"{KEY}{k}{R} {name} {DIM}{'.' * max(1, 16 - len(name))}{R} {B}{val}{R}"
+            return (
+                f"{KEY}{k}{R} {name} {DIM}{'.' * max(1, 16 - len(name))}{R} {B}{val}{R}"
+            )
 
         rows = [
-            (opt("f", tr("o_for"), tr("for_" + c["for_style"])),
-             opt("w", tr("o_width"), c["width"])),
-            (opt("i", tr("o_io"), tr("io_" + c["io_style"])),
-             opt("p", tr("o_png"), f"×{c['png']}" if c["png"] else tr("png_off"))),
-            (opt("r", tr("o_ret"), tr("ret_" + c["return_style"])),
-             opt("s", tr("o_std"), tr("std_keep" if c["keep_std"] else "std_drop"))),
+            (
+                opt("f", tr("o_for"), tr("for_" + c["for_style"])),
+                opt("w", tr("o_width"), c["width"]),
+            ),
+            (
+                opt("i", tr("o_io"), tr("io_" + c["io_style"])),
+                opt("p", tr("o_png"), f"×{c['png']}" if c["png"] else tr("png_off")),
+            ),
+            (
+                opt("r", tr("o_ret"), tr("ret_" + c["return_style"])),
+                opt("s", tr("o_std"), tr("std_keep" if c["keep_std"] else "std_drop")),
+            ),
         ]
         for i, (a, b) in enumerate(rows):
-            line(o_row + 1 + i, DIM + g.v + R + pad(" " + a, col) +
-                 pad(b, W - 2 - col) + DIM + g.v + R)
+            line(
+                o_row + 1 + i,
+                DIM + g.v + R + pad(" " + a, col) + pad(b, W - 2 - col) + DIM + g.v + R,
+            )
         self.frame(line, o_row + 4, W, "", "bottom")
 
         if self.typing:
-            line(H - 1, f'{KEY}{tr("filter")}{R} {self.filter}█   '
-                        f'{DIM}{tr("filter_hint")}{R}')
+            line(
+                H - 1,
+                f"{KEY}{tr('filter')}{R} {self.filter}█   {DIM}{tr('filter_hint')}{R}",
+            )
         elif self.msg:
             line(H - 1, self.msg)
         else:
@@ -468,8 +566,7 @@ class Picker:
     def _scroll(self, panel, body_h, total):
         if self.cur[panel] >= total:
             self.cur[panel] = max(0, total - 1)
-        if self.cur[panel] < self.top[panel]:
-            self.top[panel] = self.cur[panel]
+        self.top[panel] = min(self.top[panel], self.cur[panel])
         if self.cur[panel] >= self.top[panel] + body_h:
             self.top[panel] = self.cur[panel] - body_h + 1
         self.top[panel] = max(0, min(self.top[panel], max(0, total - body_h)))
@@ -487,11 +584,14 @@ class Picker:
         kind, full, name = items[idx]
         g = self.g
         if kind == "up":
-            body = f'{DIR}{g.up} ..{R}  {DIM}{tr("up")}{R}'
+            body = f"{DIR}{g.up} ..{R}  {DIM}{tr('up')}{R}"
         elif kind == "dir":
             got, tot = self.dir_state(full)
-            tag = (f"{ON}{got}/{tot}{R}" if got else
-                   (f"{DIM}{tot}{R}" if tot else f"{DIM}—{R}"))
+            tag = (
+                f"{ON}{got}/{tot}{R}"
+                if got
+                else (f"{DIM}{tot}{R}" if tot else f"{DIM}—{R}")
+            )
             body = f"{DIR}{g.dir} {name}/{R}  {tag}"
         else:
             mark = (ON + g.on + R) if full in self.marked else (DIM + g.off + R)
@@ -525,14 +625,18 @@ class Picker:
         if panel == 0:
             kind, full, _ = items[idx]
             if kind == "file":
-                self.marked.discard(full) if full in self.marked else self.marked.add(full)
+                self.marked.discard(full) if full in self.marked else self.marked.add(
+                    full
+                )
             else:
                 got, tot = self.dir_state(full)
                 self.mark_all_in(full, got < tot)
             self.refresh()
         else:
             key = items[idx][3]
-            self.func_off.discard(key) if key in self.func_off else self.func_off.add(key)
+            self.func_off.discard(key) if key in self.func_off else self.func_off.add(
+                key
+            )
 
     def set_all(self, value):
         if self.panel == 0:
@@ -592,16 +696,22 @@ class Picker:
             if btn in (64, 65):
                 step = -3 if btn == 64 else 3
                 self.cur[self.panel] = max(
-                    0, min(len(self.items(self.panel)) - 1, self.cur[self.panel] + step))
+                    0, min(len(self.items(self.panel)) - 1, self.cur[self.panel] + step)
+                )
                 return None
             if btn != 0:
                 return None
             for row, x0, x1, panel, idx in self.zones:
                 if y == row and x0 <= x <= x1:
-                    same = (self.panel == panel and self.cur[panel] == idx)
+                    same = self.panel == panel and self.cur[panel] == idx
                     self.panel, self.cur[panel] = panel, idx
                     items = self.items(panel)
-                    if same and panel == 0 and idx < len(items) and items[idx][0] != "file":
+                    if (
+                        same
+                        and panel == 0
+                        and idx < len(items)
+                        and items[idx][0] != "file"
+                    ):
                         self.enter_dir(items[idx][1])
                     else:
                         self.toggle(panel, idx)
@@ -686,8 +796,7 @@ class Picker:
             self.msg = WARN + tr("no_funcs") + R
             return None
         self.cfg["paths"] = sorted(self.marked)
-        self.cfg["only"] = ([] if len(names) == len(self.funcs)
-                            else sorted(set(names)))
+        self.cfg["only"] = [] if len(names) == len(self.funcs) else sorted(set(names))
         self.cfg["root"] = self.cwd
         self.cfg["ui_lang"] = LANG
         return self.cfg
@@ -718,10 +827,12 @@ def pause(message=None):
     try:
         if IS_WIN:
             import msvcrt
+
             msvcrt.getwch()
         else:
             import termios
             import tty
+
             fd = sys.stdin.fileno()
             saved = termios.tcgetattr(fd)
             try:
@@ -729,5 +840,5 @@ def pause(message=None):
                 sys.stdin.read(1)
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        logging.getLogger(__name__).debug("Не удалось дождаться клавиши", exc_info=True)

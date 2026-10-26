@@ -15,7 +15,7 @@ import re
 
 try:
     import tomllib
-except ImportError:                      # Python 3.10
+except ImportError:  # Python 3.10
     import tomli as tomllib
 
 BUILTIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "languages")
@@ -33,8 +33,14 @@ KINDS = {
     "for": {"init", "condition", "update", "body", "else"},
     "counting": {"var", "start", "end", "step", "descending", "body"},
     "foreach": {"var", "iterable", "body", "else", "range"},
-    "switch": {"value", "body", "cases", "fallthrough", "default_labels",
-               "default_after"},
+    "switch": {
+        "value",
+        "body",
+        "cases",
+        "fallthrough",
+        "default_labels",
+        "default_after",
+    },
     "break": set(),
     "continue": set(),
     "return": {"value"},
@@ -51,22 +57,82 @@ HANDLER_KEYS = {"parameter", "body"}
 
 # every key a description may have, by section; anything else is a typo
 SECTIONS = {
-    "": {"name", "title", "grammar", "package", "extensions", "priority", "markers",
-         "retry", "case_sensitive", "separators", "statement_end", "assign", "strip",
-         "skip", "skip_pattern", "empty", "conditions", "words", "functions",
-         "program", "calls", "io", "strings", "hooks", "statements", "bundle",
-         "extends"},
-    "functions": {"nodes", "declarations", "requires", "name", "body", "parameters",
-                  "parameter_nodes", "ignore_parameters", "signature", "names",
-                  "scopes", "scope_separator", "entry", "ok_exit", "nested"},
+    "": {
+        "name",
+        "title",
+        "grammar",
+        "package",
+        "extensions",
+        "priority",
+        "markers",
+        "retry",
+        "case_sensitive",
+        "separators",
+        "statement_end",
+        "assign",
+        "strip",
+        "skip",
+        "skip_pattern",
+        "empty",
+        "conditions",
+        "words",
+        "functions",
+        "program",
+        "calls",
+        "io",
+        "strings",
+        "hooks",
+        "statements",
+        "bundle",
+        "extends",
+    },
+    "functions": {
+        "nodes",
+        "declarations",
+        "requires",
+        "name",
+        "body",
+        "parameters",
+        "parameter_nodes",
+        "ignore_parameters",
+        "signature",
+        "names",
+        "scopes",
+        "scope_separator",
+        "entry",
+        "ok_exit",
+        "nested",
+    },
     "program": {"node", "body", "name", "skip"},
     "calls": {"nodes", "callee", "callee_types"},
-    "io": {"output", "input", "assign", "skip_args", "unwrap_args", "input_strip",
-           "printf_conversions", "format_replace", "streams"},
-    "io.streams": {"output", "input", "output_operator", "input_operator", "newline",
-                   "manipulators"},
-    "strings": {"nodes", "concat", "concat_operator", "escape", "template",
-                "format_operator", "format_tuples"},
+    "io": {
+        "output",
+        "input",
+        "assign",
+        "skip_args",
+        "unwrap_args",
+        "input_strip",
+        "printf_conversions",
+        "format_replace",
+        "streams",
+    },
+    "io.streams": {
+        "output",
+        "input",
+        "output_operator",
+        "input_operator",
+        "newline",
+        "manipulators",
+    },
+    "strings": {
+        "nodes",
+        "concat",
+        "concat_operator",
+        "escape",
+        "template",
+        "format_operator",
+        "format_tuples",
+    },
 }
 OUTPUT_KEYS = {"format", "style", "weave", "sep", "args"}
 INPUT_KEYS = {"args", "stream"}
@@ -88,14 +154,18 @@ def _check_keys(data, where):
         bad = set(table) - allowed
         if bad:
             name = f"[{section}]" if section else "верхнем уровне"
-            raise SpecError(f"{where}: неизвестные ключи в {name}: {', '.join(sorted(bad))}")
+            raise SpecError(
+                f"{where}: неизвестные ключи в {name}: {', '.join(sorted(bad))}"
+            )
     io = data.get("io", {})
     for kind, allowed in (("output", OUTPUT_KEYS), ("input", INPUT_KEYS)):
         for fn, opts in io.get(kind, {}).items():
             bad = set(opts) - allowed
             if bad:
-                raise SpecError(f'{where}: io.{kind}."{fn}": неизвестные ключи '
-                                f"{', '.join(sorted(bad))}")
+                raise SpecError(
+                    f'{where}: io.{kind}."{fn}": неизвестные ключи '
+                    f"{', '.join(sorted(bad))}"
+                )
 
 
 def _as_list(v):
@@ -151,8 +221,9 @@ class Spec:
         self.skip_pattern = re.compile(pat) if pat else None
         self.empty = set(data.get("empty", []))
         self.conditions = data.get("conditions", {})
-        self.words = {self.fold(w): k for k, ws in data.get("words", {}).items()
-                      for w in ws}
+        self.words = {
+            self.fold(w): k for k, ws in data.get("words", {}).items() for w in ws
+        }
 
         fn = data.get("functions", {})
         self.fn_nodes = set(fn.get("nodes", []))
@@ -239,24 +310,32 @@ class Spec:
         if "hook" in rule and kind is None:
             kind = rule["kind"] = "hook"
         if kind not in KINDS:
-            raise SpecError(f"{where}: statements.{node_type}: неизвестный вид «{kind}»")
+            raise SpecError(
+                f"{where}: statements.{node_type}: неизвестный вид «{kind}»"
+            )
         extra = set(rule) - KINDS[kind] - COMMON_KEYS
         if extra:
-            raise SpecError(f"{where}: statements.{node_type}: лишние ключи "
-                            f"{', '.join(sorted(extra))} для вида «{kind}»")
+            raise SpecError(
+                f"{where}: statements.{node_type}: лишние ключи "
+                f"{', '.join(sorted(extra))} для вида «{kind}»"
+            )
         if rule.get("hook") and rule["hook"] not in self.hooks:
             from . import hooks as builtin
+
             if not hasattr(builtin, rule["hook"]):
-                raise SpecError(f"{where}: statements.{node_type}: нет функции "
-                                f"«{rule['hook']}»")
+                raise SpecError(
+                    f"{where}: statements.{node_type}: нет функции «{rule['hook']}»"
+                )
         if kind == "switch":
             cases = {}
             for ct, co in rule.get("cases", {}).items():
                 co = dict(co)
                 bad = set(co) - CASE_KEYS
                 if bad:
-                    raise SpecError(f"{where}: statements.{node_type}.cases.{ct}: "
-                                    f"лишние ключи {', '.join(sorted(bad))}")
+                    raise SpecError(
+                        f"{where}: statements.{node_type}.cases.{ct}: "
+                        f"лишние ключи {', '.join(sorted(bad))}"
+                    )
                 cases[ct] = co
             rule["cases"] = cases
             rule["label_strip"] = re.compile(DEFAULT_LABEL_STRIP)
@@ -267,8 +346,10 @@ class Spec:
             for ht, ho in handlers.items():
                 bad = set(ho) - HANDLER_KEYS
                 if bad:
-                    raise SpecError(f"{where}: statements.{node_type}.handlers.{ht}: "
-                                    f"лишние ключи {', '.join(sorted(bad))}")
+                    raise SpecError(
+                        f"{where}: statements.{node_type}.handlers.{ht}: "
+                        f"лишние ключи {', '.join(sorted(bad))}"
+                    )
             rule["handlers"] = handlers
         for key in ("else", "finally", "catch_all"):
             if kind == "try" and isinstance(rule.get(key), str):
@@ -309,9 +390,10 @@ class Spec:
         if self._language is None and self._error is None:
             try:
                 from tree_sitter import Language
+
                 mod = importlib.import_module(self.grammar_module)
                 self._language = Language(getattr(mod, self.grammar_function)())
-            except Exception as e:                   # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 self._error = e
         return self._language
 
@@ -326,7 +408,9 @@ class Spec:
 def _load_hooks(path):
     if not os.path.isfile(path):
         raise SpecError(f"не найден файл функций {path}")
-    name = "blockwright_hooks_" + re.sub(r"\W", "_", os.path.splitext(os.path.basename(path))[0])
+    name = "blockwright_hooks_" + re.sub(
+        r"\W", "_", os.path.splitext(os.path.basename(path))[0]
+    )
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -339,9 +423,13 @@ def _step(nodes, seg, spec):
     for node in nodes:
         if seg.startswith("#"):
             idx = int(seg[1:])
-            free = [c for i, c in enumerate(node.children)
-                    if c.is_named and not node.field_name_for_child(i)
-                    and not (spec and spec.skipped(c))]
+            free = [
+                c
+                for i, c in enumerate(node.children)
+                if c.is_named
+                and not node.field_name_for_child(i)
+                and not (spec and spec.skipped(c))
+            ]
             if idx < len(free):
                 out.append(free[idx])
             continue
@@ -420,7 +508,7 @@ class Registry:
             self._build(name)
 
     def _resolve(self, name, seen=()):
-        data, path = self.raw[name]
+        data, _path = self.raw[name]
         base = data.get("extends")
         if not base:
             return data
@@ -433,13 +521,16 @@ class Registry:
         return merged
 
     def _build(self, name):
-        data, path = self.raw[name]
+        _data, path = self.raw[name]
         try:
             spec = Spec(self._resolve(name), path)
         except (SpecError, KeyError, TypeError, ValueError, re.error) as e:
             msg = str(e)
-            self.errors.append(msg if msg.startswith(os.path.basename(path))
-                               else f"{os.path.basename(path)}: {msg}")
+            self.errors.append(
+                msg
+                if msg.startswith(os.path.basename(path))
+                else f"{os.path.basename(path)}: {msg}"
+            )
             self.specs.pop(name, None)
             return None
         self.specs[name] = spec
@@ -466,7 +557,7 @@ class Registry:
         ext = os.path.splitext(path)[1].lower()
         pool = self.select(only)
         cands = [s for s in pool if ext in s.extensions]
-        if not cands and (only or ext not in self.extensions()):
+        if not cands and only:
             cands = pool
         if not cands:
             return None
@@ -475,6 +566,7 @@ class Registry:
 
         def score(s):
             return (sum(1 for m in s.markers if m in text), s.priority)
+
         return max(cands, key=score)
 
 

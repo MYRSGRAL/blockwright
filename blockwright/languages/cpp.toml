@@ -1,54 +1,183 @@
-# C++: everything C has, plus streams, classes, range-for and exceptions.
+# Единственное встроенное описание: C++ с общими правилами семейства C.
 
 name = "cpp"
 title = "C++"
-extends = "c"
 grammar = "tree_sitter_cpp"
 package = "tree-sitter-cpp"
-extensions = [".cpp", ".cc", ".cxx", ".c++", ".cp",
-              ".h", ".hpp", ".hh", ".hxx", ".h++", ".inl", ".ipp", ".tcc"]
+extensions = [".cpp", ".cc", ".cxx", ".c++", ".cp", ".h", ".hpp", ".hh", ".hxx", ".h++", ".inl", ".ipp", ".tcc"]
 priority = 0
-# words that make an ambiguous header C++
-markers = ["std::", "class ", "namespace ", "template<", "template <",
-           "public:", "private:", "protected:", "::", "#include <iostream>",
-           "nullptr", "auto ", "new ", "delete "]
-retry = ["c"]
+retry = []
+separators = ["::"]
+strip = ["\\bstd\\s*::\\s*"]
+skip = ["comment", "preproc_call"]
+markers = []
 
 [functions]
-names = ["identifier", "field_identifier", "type_identifier", "qualified_identifier",
-         "operator_name", "destructor_name", "operator_cast"]
+nodes = ["function_definition"]
+declarations = ["declaration", "field_declaration"]
+requires = "function_declarator"
+name = ""
+names = ["identifier", "field_identifier", "type_identifier", "qualified_identifier", "operator_name", "destructor_name", "operator_cast"]
+parameter_nodes = ["parameter_declaration", "optional_parameter_declaration", "variadic_parameter_declaration"]
+ignore_parameters = ["void"]
+entry = ["main"]
+ok_exit = ["0", "EXIT_SUCCESS"]
 scopes = ["class_specifier", "struct_specifier", "union_specifier", "namespace_definition"]
 
-[conditions]
-# `if (int x = f())`: the condition is the value of the clause
-condition_clause = "value"
-
 [statements]
+compound_statement = "block"
+expression_statement = "expression"
+declaration = "simple"
+else_clause = "block"
+break_statement = "break"
+continue_statement = "continue"
+return_statement = "return"
 field_declaration = "simple"
-for_range_loop = { kind = "foreach", var = "declarator", iterable = "right", body = "body" }
-try_statement = { kind = "try", body = "body", handlers = { catch_clause = { parameter = "parameters" } } }
 throw_statement = "throw"
 
+[statements.if_statement]
+kind = "if"
+condition = "condition"
+then = "consequence"
+else = "alternative"
+
+[statements.while_statement]
+kind = "while"
+condition = "condition"
+body = "body"
+
+[statements.do_statement]
+kind = "do"
+condition = "condition"
+body = "body"
+
+[statements.for_statement]
+kind = "for"
+init = "initializer"
+condition = "condition"
+update = "update"
+body = "body"
+
+[statements.switch_statement]
+kind = "switch"
+value = "condition"
+body = "body"
+fallthrough = true
+
+[statements.switch_statement.cases]
+
+[statements.switch_statement.cases.case_statement]
+value = "value"
+
+[statements.goto_statement]
+kind = "goto"
+label = "label"
+
+[statements.labeled_statement]
+kind = "label"
+label = "label"
+
+[statements.for_range_loop]
+kind = "foreach"
+var = "declarator"
+iterable = "right"
+body = "body"
+
+[statements.try_statement]
+kind = "try"
+body = "body"
+
+[statements.try_statement.handlers]
+
+[statements.try_statement.handlers.catch_clause]
+parameter = "parameters"
+
+[calls]
+callee = "function"
+callee_types = ["identifier", "qualified_identifier"]
+
+[calls.nodes]
+call_expression = "arguments"
+
+[io]
+input_strip = "&"
+
 [io.output]
-cout = {}
+
+[io.output.printf]
+format = 0
+
+[io.output.printf_s]
+format = 0
+
+[io.output.wprintf]
+format = 0
+
+[io.output.vprintf]
+format = 0
+
+[io.output.fprintf]
+format = 1
+args = "1:"
+
+[io.output.puts]
+weave = ":1"
+
+[io.output.fputs]
+weave = ":1"
+args = ":1"
+
+[io.output.putchar]
+weave = ":1"
+
+[io.output.putc]
+weave = ":1"
+args = "1:"
+
+[io.output.cout]
 
 [io.input]
-# std::getline(std::cin, line): input only when the first argument is a stream
-getline = { args = "1:", stream = 0 }
+
+[io.input.scanf]
+args = "1:"
+
+[io.input.scanf_s]
+args = "1:"
+
+[io.input.wscanf]
+args = "1:"
+
+[io.input.fscanf]
+args = "2:"
+
+[io.input.sscanf]
+args = "2:"
+
+[io.input.gets]
+
+[io.input.gets_s]
+
+[io.input.fgets]
+
+[io.input.getchar]
+
+[io.input.getc]
+
+[io.input.getline]
+args = "1:"
+stream = 0
 
 [io.streams]
 output = ["cout", "cerr", "clog", "wcout"]
 input = ["cin", "wcin"]
 output_operator = "<<"
 input_operator = ">>"
-# left out when output is listed rather than woven into a sentence
-newline = ["std::endl", "endl", '"\n"', "'\\n'", "std::flush", "flush"]
-# stream manipulators print nothing by themselves
-manipulators = ["endl", "flush", "ends", "fixed", "scientific", "hexfloat",
-                "defaultfloat", "boolalpha", "noboolalpha", "showpoint",
-                "noshowpoint", "showpos", "noshowpos", "left", "right",
-                "internal", "hex", "dec", "oct", "setw", "setprecision",
-                "setfill", "setbase", "setiosflags", "resetiosflags"]
+newline = ["std::endl", "endl", "\"\\n\"", "'\\n'", "std::flush", "flush"]
+manipulators = ["endl", "flush", "ends", "fixed", "scientific", "hexfloat", "defaultfloat", "boolalpha", "noboolalpha", "showpoint", "noshowpoint", "showpos", "noshowpos", "left", "right", "internal", "hex", "dec", "oct", "setw", "setprecision", "setfill", "setbase", "setiosflags", "resetiosflags"]
 
 [strings]
 nodes = ["string_literal", "raw_string_literal", "char_literal"]
+concat = ["concatenated_string"]
+
+[conditions]
+condition_clause = "value"
