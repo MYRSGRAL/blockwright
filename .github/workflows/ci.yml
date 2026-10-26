@@ -30,6 +30,13 @@ jobs:
       - name: Установить зависимость измерения текста и PNG
         run: python -m pip install "Pillow>=11.3"
 
+      - name: Выбрать системный Google Chrome для PNG-проверки
+        if: runner.os == 'Linux'
+        run: |
+          browser_path="$(command -v google-chrome)"
+          "$browser_path" --version
+          echo "BLOCKWRIGHT_BROWSER=$browser_path" >> "$GITHUB_ENV"
+
       - name: Unit tests on the bundled parsers
         run: python -m unittest discover -s tests -v
 
