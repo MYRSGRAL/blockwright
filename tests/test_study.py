@@ -34,6 +34,67 @@ def chart(code: str, study: bool = True) -> M.Seq:
 
 
 class StudySemantics(unittest.TestCase):
+    def test_console_setup_is_hidden_only_in_study_mode(self) -> None:
+        calls = [
+            "SetConsoleOutputCP(CP_UTF8)",
+            "SetConsoleCP(65001)",
+            'setlocale(LC_ALL, "Russian")',
+            'std::setlocale(LC_CTYPE, "")',
+            "std::ios::sync_with_stdio(false)",
+            "std::ios_base::sync_with_stdio(true)",
+            "std::cin.tie(nullptr)",
+            "std::cout.tie(0)",
+        ]
+        for call in calls:
+            with self.subTest(call=call):
+                code = f"int main(){{{call}; int x=read(); return 0;}}"
+                body = chart(code)
+                self.assertEqual(body.items[0], M.Simple(M.PROCESS, "x = read()"))
+                self.assertEqual(len(body.items), 2)
+                detailed = chart(code, study=False)
+                self.assertGreater(len(detailed.items), len(body.items))
+
+    def test_console_setup_preserves_computations_and_observed_results(self) -> None:
+        for call in (
+            "SetConsoleOutputCP(next_codepage())",
+            "SetConsoleCP(++cp)",
+            "setlocale(LC_ALL, locale_name())",
+            "std::ios::sync_with_stdio(flag())",
+            "std::cin.tie(get_stream())",
+            "custom::SetConsoleCP(CP_UTF8)",
+            'system("pause")',
+        ):
+            with self.subTest(call=call):
+                body = chart(f"int main(){{{call}; return 0;}}")
+                self.assertEqual(len(body.items), 2)
+        body = chart("int main(){if(!SetConsoleCP(CP_UTF8)){return 1;} return 0;}")
+        self.assertIsInstance(body.items[0], M.If)
+        self.assertIn("SetConsoleCP", body.items[0].cond)
+
+    def test_user_defined_console_names_are_not_hidden(self) -> None:
+        for code in (
+            "void SetConsoleCP(int cp){} int main(){SetConsoleCP(CP_UTF8); return 0;}",
+            "int main(){auto SetConsoleOutputCP=callback; SetConsoleOutputCP(CP_UTF8); return 0;}",
+            "int main(){Stream cin; cin.tie(nullptr); return 0;}",
+            "int main(){int CP_UTF8=read(); SetConsoleCP(CP_UTF8); return 0;}",
+        ):
+            with self.subTest(code=code):
+                # В первом примере пользовательская функция предшествует main.
+                src = code.encode()
+                tree, spec, errors = P.parse_source(
+                    src, P.guess_language("study.cpp", code)
+                )
+                source = project.Source("study.cpp", src, spec, tree, errors)
+                known = P.collect_known_names(src, tree.root_node, spec)
+                body = project.charts(source, options(), known)[-1].body
+                self.assertTrue(
+                    any(
+                        isinstance(i, M.Simple)
+                        and ("SetConsole" in i.text or "tie(" in i.text)
+                        for i in body.items
+                    )
+                )
+
     def test_io_direction_does_not_depend_on_output_text(self) -> None:
         body = chart(
             'int main(){int x; std::cout << "Ввод x"; std::cin >> x; return 0;}'

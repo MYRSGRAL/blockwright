@@ -7,6 +7,23 @@ from .build import Builder
 
 _MAX_INITIALIZATIONS = 3
 _MAX_INITIALIZATION_TEXT = 80
+_CONSOLE_CODEPAGES = {
+    "CP_ACP",
+    "CP_OEMCP",
+    "CP_MACCP",
+    "CP_THREAD_ACP",
+    "CP_SYMBOL",
+    "CP_UTF7",
+    "CP_UTF8",
+}
+_LOCALE_CATEGORIES = {
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+}
 
 
 class StudyBuilder(Builder):
@@ -298,8 +315,64 @@ class StudyBuilder(Builder):
             return M.Simple(kind, result.text)
         return result
 
+    def _console_setup(self, expr: Any) -> bool:
+        """Скрывает только самостоятельную настройку среды с простыми аргументами."""
+        if expr is None or expr.type != "call_expression":
+            return False
+        function = expr.child_by_field_name("function")
+        if function is None:
+            return False
+        args = self.call_args(expr)
+        name = self.raw(function)
+        if name in {"SetConsoleCP", "SetConsoleOutputCP"}:
+            return (
+                name not in self._shadowed
+                and name not in self.known
+                and len(args) == 1
+                and (
+                    args[0].type == "number_literal"
+                    or (
+                        self.raw(args[0]) in _CONSOLE_CODEPAGES
+                        and self.raw(args[0]) not in self._shadowed
+                    )
+                )
+            )
+        if self._name(function, "setlocale"):
+            return (
+                len(args) == 2
+                and self.raw(args[0]) in _LOCALE_CATEGORIES
+                and self.raw(args[0]) not in self._shadowed
+                and self._string_value(args[1]) is not None
+            )
+        if name in {
+            "std::ios::sync_with_stdio",
+            "std::ios_base::sync_with_stdio",
+        }:
+            owner = name.split("::")[0]
+            return (
+                name not in self.known
+                and owner not in self._shadowed
+                and len(args) == 1
+                and args[0].type in {"true", "false"}
+            )
+        if function.type == "field_expression":
+            owner = function.child_by_field_name("argument")
+            field = function.child_by_field_name("field")
+            return (
+                self.raw(field) == "tie"
+                and any(
+                    self._name(owner, stream)
+                    for stream in ("cin", "cout", "cerr", "clog")
+                )
+                and len(args) == 1
+                and self.raw(args[0]) in {"nullptr", "0"}
+            )
+        return False
+
     def k_expression(self, n: Any, r: dict) -> list[object]:
         expr = self._expr(n)
+        if self._console_setup(expr):
+            return []
         if expr is not None:
             stream = self._stream_parts(expr)
             if (
