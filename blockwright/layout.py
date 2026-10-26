@@ -441,12 +441,22 @@ def _study_if(item: Any, opts: Any) -> Frame:
     f.shapes.append(d)
     f.edges.append(_edge([shape_port(d, "bottom"), (0, top)], arrow=main.entry_shape))
     cy = d["h"] / 2
-    f.edges.append(
-        _edge(
-            [shape_port(d, "right"), (side_x, cy), (side_x, side_top)],
-            arrow=side.entry_shape,
-        )
+    direct_jump = (
+        not side.shapes
+        and not side.edges
+        and len(side.pend) == 1
+        and side.pend[0]["kind"] in {"break", "continue"}
     )
+    if direct_jump:
+        # У перехода нет блока назначения: коридор строит замыкание цикла.
+        side.pend[0]["points"] = [shape_port(d, "right")]
+    else:
+        f.edges.append(
+            _edge(
+                [shape_port(d, "right"), (side_x, cy), (side_x, side_top)],
+                arrow=side.entry_shape,
+            )
+        )
     f.labels.extend(
         [_label(5, d["h"] + 12, main_label), _label(d["w"] / 2 + 5, cy - 6, side_label)]
     )

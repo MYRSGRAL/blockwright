@@ -4,7 +4,12 @@ import unittest
 from types import SimpleNamespace
 
 from blockwright import model as M
-from blockwright.geometry import document_bottom, shape_port, validate_geometry
+from blockwright.geometry import (
+    document_bottom,
+    shape_port,
+    validate_geometry,
+    validate_ports,
+)
 from blockwright.layout import Frame, layout, layout_function, make_shape
 from blockwright.pages import split_pages
 from blockwright.render import render_svg, shape_outline
@@ -27,6 +32,32 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_direct_break_leaves_decision_without_staircase(self) -> None:
+        for kind in ("break", "continue"):
+            with self.subTest(kind=kind):
+                frame = layout(
+                    M.While(
+                        "true",
+                        M.Seq(
+                            [
+                                M.Simple(M.OUTPUT, "Введите число:"),
+                                M.If("cin >> r", M.Jump(kind)),
+                                M.Simple(M.PROCESS, "cin.clear()"),
+                                M.Simple(M.PROCESS, "cin.ignore(10000, '\\n')"),
+                            ]
+                        ),
+                    ),
+                    options(),
+                )
+                decision = next(s for s in frame.shapes if s["text"] == "cin >> r")
+                start = shape_port(decision, "right")
+                edge = next(e for e in frame.edges if e["points"][0] == start)
+                self.assertEqual(len(edge["points"]), 4 if kind == "break" else 5)
+                self.assertEqual(edge["points"][1][0], edge["points"][2][0])
+                self.assertEqual(edge["points"][2][1], edge["points"][3][1])
+                self.assertEqual(validate_geometry(frame), [])
+                self.assertEqual(validate_ports(frame), [])
+
     def test_page_cut_at_edge_vertex_preserves_both_directions(self) -> None:
         for reverse in (False, True):
             frame = Frame()
