@@ -543,6 +543,8 @@ class StudyBuilder(Builder):
         if retry is None:
             return super().k_while(n, r)
         target, message = retry
+        if self.fn_is_main and getattr(self.opts, "checks", "hide") == "hide":
+            return [M.Simple(M.INPUT, "Ввод " + target)]
         return [
             M.Simple(M.INPUT, "Ввод " + target),
             M.While(
@@ -715,9 +717,46 @@ class StudyBuilder(Builder):
             return
         body.items[0].text = text
 
+    def _service_error_exit(self, node: Any) -> bool:
+        """Только статическое сообщение и числовой код завершения main."""
+        if not self.fn_is_main or getattr(self.opts, "checks", "hide") != "hide":
+            return False
+        statements = self._statements(node)
+        if len(statements) != 2 or self._static_stream_output(statements[0]) is None:
+            return False
+        if statements[1].type != "return_statement":
+            return False
+        value = self._unwrap(next(iter(statements[1].named_children), None))
+        if (
+            value is not None
+            and value.type == "unary_expression"
+            and self.op_of(value) in {"+", "-"}
+        ):
+            value = self._unwrap(value.child_by_field_name("argument"))
+        return value is not None and value.type == "number_literal"
+
     def k_if(self, n: Any, r: dict) -> list[object]:
-        result = super().k_if(n, r)
         finite = self._finite(n.child_by_field_name("condition"))
+        if n.child_by_field_name("alternative") is None and self._service_error_exit(
+            n.child_by_field_name("consequence")
+        ):
+            if finite and finite[1]:
+                return []
+            condition = self._unwrap(n.child_by_field_name("condition"))
+            if condition.type == "unary_expression" and self.op_of(condition) == "!":
+                read = self._stream_parts(condition.child_by_field_name("argument"))
+                if (
+                    read
+                    and read[0] == M.INPUT
+                    and read[1]
+                    and all(p.type == "identifier" for p in read[1])
+                ):
+                    return [
+                        M.Simple(
+                            M.INPUT, "Ввод " + ", ".join(self.t(p) for p in read[1])
+                        )
+                    ]
+        result = super().k_if(n, r)
         if finite and finite[1]:
             self._short_error(
                 result[-1].then_,
@@ -789,6 +828,15 @@ class StudyBuilder(Builder):
                 if out and index and self._prompt(nodes[index - 1]):
                     out.pop()
                 out.append(M.Simple(M.INPUT, "Ввод " + target))
+                check = nodes[index + 2]
+                if check.child_by_field_name(
+                    "alternative"
+                ) is None and self._service_error_exit(
+                    check.child_by_field_name("consequence")
+                ):
+                    output_values = None
+                    index += 3
+                    continue
                 branch = self.stmt(nodes[index + 2])[-1]
                 branch.cond = "Ошибка ввода?"
                 self._short_error(

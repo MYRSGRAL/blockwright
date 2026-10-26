@@ -13,6 +13,24 @@ from blockwright.cli import Opts, build_parser, main
 
 
 class Product(unittest.TestCase):
+    def test_checks_flag_controls_lab2_error_branches(self) -> None:
+        source = Path(__file__).parent / "fixtures/study/lab2.cpp"
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, flags, visible in (
+                ("default", [], False),
+                ("show", ["--checks", "show"], True),
+                ("full", ["--detail", "full"], True),
+            ):
+                with self.subTest(mode=name):
+                    out = Path(tmp) / name
+                    self.assertEqual(
+                        main([str(source), "--no-ui", "-q", "-o", str(out), *flags]), 0
+                    )
+                    svg = next(out.glob("*.svg")).read_text(encoding="utf-8")
+                    self.assertEqual("Ошибка" in svg, visible)
+                    self.assertIn("sum", svg)
+                    self.assertIn("i &lt;= 10", svg)
+
     def test_default_cpp_registry(self) -> None:
         reg = langs.Registry()
         self.assertEqual(reg.errors, [])
@@ -24,6 +42,8 @@ class Product(unittest.TestCase):
     def test_study_defaults_and_explicit_full_mode(self) -> None:
         opts = Opts()
         self.assertTrue(opts.study)
+        self.assertEqual(opts.checks, "hide")
+        self.assertEqual(build_parser().parse_args(["--checks", "show"]).checks, "show")
         self.assertEqual(opts.notation, "course")
         self.assertEqual(opts.for_style, "decision")
         args = build_parser().parse_args(["--detail", "full", "--notation", "gost"])

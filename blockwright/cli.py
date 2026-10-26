@@ -36,6 +36,7 @@ class Opts:
     default_label: str = "иначе"
     plain_begin: bool = False
     study: bool = True
+    checks: str = "hide"
     notation: str = "course"
     page_height: float = 926.0
     page_width: float = 605.0
@@ -207,6 +208,12 @@ def build_parser():
         choices=["study", "full"],
         default="study",
         help="study — краткая учебная схема; full — подробные выражения C++",
+    )
+    ap.add_argument(
+        "--checks",
+        choices=["hide", "show"],
+        default="hide",
+        help="hide — убрать распознанные служебные проверки; show — показать ветки ошибок",
     )
     ap.add_argument(
         "--notation",
@@ -506,6 +513,7 @@ def main(argv=None):
         end_label=words["end"],
         default_label=words["default"],
         study=args.detail == "study",
+        checks=args.checks,
         notation=args.notation,
         page_height=args.page_height,
         page_width=args.page_width,

@@ -13,9 +13,10 @@ from blockwright import parse as P
 from blockwright import project
 
 
-def options(study: bool = True) -> SimpleNamespace:
+def options(study: bool = True, checks: str = "show") -> SimpleNamespace:
     return SimpleNamespace(
         study=study,
+        checks=checks,
         keep_std=False,
         lang="ru",
         io_style="pretty",
@@ -25,12 +26,12 @@ def options(study: bool = True) -> SimpleNamespace:
     )
 
 
-def chart(code: str, study: bool = True) -> M.Seq:
+def chart(code: str, study: bool = True, checks: str = "show") -> M.Seq:
     src = code.encode()
     tree, spec, errors = P.parse_source(src, P.guess_language("study.cpp", code))
     source = project.Source("study.cpp", src, spec, tree, errors)
     known = P.collect_known_names(src, tree.root_node, spec)
-    return project.charts(source, options(study), known)[0].body
+    return project.charts(source, options(study, checks), known)[0].body
 
 
 _RETRY_INPUT = r"""while (true) {
@@ -46,6 +47,53 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_hide_checks_keeps_lab2_algorithm_and_input(self) -> None:
+        source = project.load(str(Path(__file__).parent / "fixtures/study/lab2.cpp"))
+        body = project.charts(source, options(checks="hide"), source.known)[0].body
+        self.assertEqual(body.items[0], M.Simple(M.INPUT, "Ввод x"))
+        self.assertFalse(any(isinstance(item, M.If) for item in body.items))
+        self.assertTrue(any(isinstance(item, M.ForLoop) for item in body.items))
+        self.assertEqual(body.items[-2], M.Simple(M.OUTPUT, "Вывод x, sum"))
+        self.assertEqual(body.items[-1], M.Return("0", True))
+
+    def test_hide_checks_keeps_observable_work_in_error_branches(self) -> None:
+        for action in (
+            'std::cout << "Ошибка" << ++counter;',
+            "report();",
+            'std::cout << "Ошибка"; save();',
+        ):
+            body = chart(
+                "int main(){double sum=0; if(!std::isfinite(sum)){"
+                + action
+                + "return 1;} return 0;}",
+                checks="hide",
+            )
+            self.assertTrue(any(isinstance(item, M.If) for item in body.items))
+        body = chart(
+            'int main(){if(!std::isfinite(sum)){std::cout << "Ошибка"; return 1;} else {compute();} return 0;}',
+            checks="hide",
+        )
+        self.assertIsInstance(body.items[0], M.If)
+
+    def test_hide_checks_preserves_reads_and_other_function_results(self) -> None:
+        body = chart(
+            'int main(){if(!(std::cin >> x)){std::cout << "Ошибка"; return 1;} compute(x); return 0;}',
+            checks="hide",
+        )
+        self.assertEqual(body.items[0], M.Simple(M.INPUT, "Ввод x"))
+        self.assertFalse(any(isinstance(item, M.If) for item in body.items))
+        retry = chart(
+            "int main(){double r;" + _RETRY_INPUT + "return 0;}", checks="hide"
+        )
+        self.assertEqual(
+            retry.items, [M.Simple(M.INPUT, "Ввод r"), M.Return("0", True)]
+        )
+        body = chart(
+            'double f(double x){if(!std::isfinite(x)){std::cout << "Ошибка"; return 1;} return x;}',
+            checks="hide",
+        )
+        self.assertIsInstance(body.items[0], M.If)
+
     def test_macro_names_disable_environment_and_retry_shortening(self) -> None:
         for define, call in (
             ("#define system(x) report(x)", 'system("pause")'),
