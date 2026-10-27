@@ -314,7 +314,11 @@ class StudyBuilder(Builder):
                 return None
             target = decl.child_by_field_name("declarator")
             value = decl.child_by_field_name("value")
-            if target is None or target.type != "identifier" or value is None:
+            if (
+                target is None
+                or target.type not in {"identifier", "array_declarator"}
+                or value is None
+            ):
                 return None
             texts.append(f"{self.t(target)} = {self.t(value)}")
         return [M.Simple(M.PROCESS, text) for text in texts]

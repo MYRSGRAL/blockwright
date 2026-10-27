@@ -47,6 +47,18 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_initialized_arrays_keep_values_without_type(self) -> None:
+        for declaration, text in (
+            ("bool seen[10] = {};", "seen[10] = {}"),
+            ("int a[3] = {1, 2, 3};", "a[3] = {1, 2, 3}"),
+            ("double matrix[2][2] = {};", "matrix[2][2] = {}"),
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertEqual(
+                    chart("int main(){" + declaration + "}").items,
+                    [M.Simple(M.PROCESS, text)],
+                )
+
     def test_plain_declarations_are_hidden_and_explicit_values_remain(self) -> None:
         body = chart(
             'int main(){int n,i; int *p; double a[100]; std::string line; std::string label="имя"; int k=0; Widget work; return 0;}'
