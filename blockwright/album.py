@@ -8,6 +8,7 @@ exported as SVG or PNG or saved as a project file.
 """
 
 import base64
+import hashlib
 import json
 
 from .text import xml_escape
@@ -221,7 +222,7 @@ const KIND_RU={process:"Процесс",io:"ВводВывод",input:"Ввод"
                terminator:"Терминатор",predefined:"Подпрограмма",
                preparation:"Цикл",connector:"Соединитель"};
 const KINDS=["terminator","process","input","output","io","decision","predefined","preparation","connector"];
-const STORE='blockwright.cpp.v1';
+const STORE='blockwright.cpp.v2.'+(typeof DATA!=='undefined'&&DATA.revision?DATA.revision:'preview');
 
 /* ---------- i18n ---------- */
 const I18N={
@@ -1044,12 +1045,16 @@ let sel={shapes:new Set(),edges:new Set(),labels:new Set()};
 let tool='select', hist=[], future=[], drag=null, pending=null, guides=[];
 
 function loadStore(){
-  try{const raw=JSON.parse(localStorage.getItem(STORE)||'{}');
+  try{const saved=localStorage.getItem(STORE);
+    const raw=JSON.parse(saved||'{}');
+    // Старое хранилище сохраняем; из него переносим только настройки интерфейса.
+    const legacy=saved?{}:JSON.parse(localStorage.getItem('blockwright.cpp.v1')||'{}');
     docs=raw.docs||{}; custom=raw.custom||[]; dirty=new Set(raw.dirty||[]);
     names=raw.names||{};
-    LANG=raw.lang||DATA.lang||LANG;          // the viewer's choice wins over the defaults,
-    THEME=raw.theme||DATA.theme||THEME;      // which come from the command line
-    if(raw.exportTitle!==undefined)exportTitle=!!raw.exportTitle;}
+    LANG=raw.lang||legacy.lang||DATA.lang||LANG;
+    THEME=raw.theme||legacy.theme||DATA.theme||THEME;
+    if(raw.exportTitle!==undefined)exportTitle=!!raw.exportTitle;
+    else if(legacy.exportTitle!==undefined)exportTitle=!!legacy.exportTitle;}
   catch(e){docs={};custom=[];dirty=new Set();names={};
            LANG=DATA.lang||LANG;THEME=DATA.theme||THEME;}
   if(!I18N[LANG])LANG='ru';
@@ -1850,8 +1855,14 @@ def _router_scripts():
 
 def render_html(entries, title="Блок-схемы", folder="", lang="ru", theme="light"):
     """entries: dicts with rel, name, signature, line, anchor and model."""
+    identity = {"folder": folder or title, "items": entries}
+    revision = hashlib.sha256(
+        json.dumps(
+            identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
     payload = json.dumps(
-        {"folder": folder or title, "items": entries, "lang": lang, "theme": theme},
+        {**identity, "lang": lang, "theme": theme, "revision": revision},
         ensure_ascii=False,
         separators=(",", ":"),
     )
