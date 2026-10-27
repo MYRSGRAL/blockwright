@@ -377,7 +377,12 @@ class StudyBuilder(Builder):
         if node.type == "update_expression":
             arg = node.child_by_field_name("argument")
             op = self.op_of(node)
-            if arg is not None and arg.type == "identifier" and op in {"++", "--"}:
+            if (
+                arg is not None
+                and arg.type == "identifier"
+                and self.raw(arg) in self._scalar_names
+                and op in {"++", "--"}
+            ):
                 name = self.t(arg)
                 return M.Simple(
                     M.PROCESS, f"{name} = {name} {'+' if op == '++' else '-'} 1"
@@ -531,6 +536,9 @@ class StudyBuilder(Builder):
 
     def k_expression(self, n: Any, r: dict) -> list[object]:
         expr = self._expr(n)
+        update = self._unwrap(expr)
+        if update is not None and update.type == "update_expression":
+            return [self._simple_from_node(update)]
         if self._console_setup(expr):
             return []
         if (

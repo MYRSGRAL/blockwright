@@ -318,7 +318,7 @@ class InputGroups(unittest.TestCase):
         self.assertFalse(any("Input" in cond for cond in conditions))
         texts = [item.text for item in walk(body) if isinstance(item, M.Simple)]
         self.assertIn("a[k] = a[i]", texts)
-        self.assertIn("k++", texts)
+        self.assertIn("k = k + 1", texts)
         self.assertIn("n = k", texts)
         self.assertIn("Вывод n, a[n]", texts)
         self.assertFalse(

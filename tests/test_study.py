@@ -47,6 +47,46 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_standalone_increment_and_decrement_have_explicit_assignment(self) -> None:
+        for expression, expected in (
+            ("count++", "count = count + 1"),
+            ("++count", "count = count + 1"),
+            ("count--", "count = count - 1"),
+            ("--count", "count = count - 1"),
+            ("((count++))", "count = count + 1"),
+        ):
+            with self.subTest(expression=expression):
+                body = chart("int main(){int count=0;" + expression + ";}")
+                self.assertEqual(body.items[-1], M.Simple(M.PROCESS, expected))
+
+    def test_increment_inside_expression_and_full_mode_keep_cpp(self) -> None:
+        for statement in ("x = count++", "x = ++count", "use(count++)", "a[i++]++"):
+            with self.subTest(statement=statement):
+                body = chart("int main(){int x,count,i,a[10];" + statement + ";}")
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.Simple) and item.text == statement
+                        for item in body.items
+                    )
+                )
+        body = chart("int main(){int count=0;count++;}", study=False)
+        self.assertEqual(body.items[-1], M.Simple(M.PROCESS, "count++"))
+
+    def test_loop_step_and_body_use_the_same_increment_notation(self) -> None:
+        body = chart("int main(){int count=0;for(int i=0;i<10;i++){count++;}}")
+        loop = body.items[-1]
+        self.assertIsInstance(loop, M.ForLoop)
+        self.assertEqual(loop.update, M.Simple(M.PROCESS, "i = i + 1"))
+        self.assertEqual(loop.body.items, [M.Simple(M.PROCESS, "count = count + 1")])
+
+    def test_overloaded_and_macro_increments_remain_explicit_cpp(self) -> None:
+        for code in (
+            "struct Counter{};int main(){Counter count;count++;}",
+            "#define count custom()\nint main(){int count;count++;}",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(chart(code).items[-1], M.Simple(M.PROCESS, "count++"))
+
     def test_array_rank_distinguishes_matrices_from_arrays_of_pointers(self) -> None:
         from blockwright.study import StudyBuilder
 
