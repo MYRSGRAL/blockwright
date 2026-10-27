@@ -47,6 +47,95 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_standalone_increment_and_decrement_have_explicit_assignment(self) -> None:
+        for expression, expected in (
+            ("count++", "count = count + 1"),
+            ("++count", "count = count + 1"),
+            ("count--", "count = count - 1"),
+            ("--count", "count = count - 1"),
+            ("((count++))", "count = count + 1"),
+        ):
+            with self.subTest(expression=expression):
+                body = chart("int main(){int count=0;" + expression + ";}")
+                self.assertEqual(body.items[-1], M.Simple(M.PROCESS, expected))
+
+    def test_increment_inside_expression_and_full_mode_keep_cpp(self) -> None:
+        for statement in ("x = count++", "x = ++count", "use(count++)", "a[i++]++"):
+            with self.subTest(statement=statement):
+                body = chart("int main(){int x,count,i,a[10];" + statement + ";}")
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.Simple) and item.text == statement
+                        for item in body.items
+                    )
+                )
+        body = chart("int main(){int count=0;count++;}", study=False)
+        self.assertEqual(body.items[-1], M.Simple(M.PROCESS, "count++"))
+
+    def test_loop_step_and_body_use_the_same_increment_notation(self) -> None:
+        body = chart("int main(){int count=0;for(int i=0;i<10;i++){count++;}}")
+        loop = body.items[-1]
+        self.assertIsInstance(loop, M.ForLoop)
+        self.assertEqual(loop.update, M.Simple(M.PROCESS, "i = i + 1"))
+        self.assertEqual(loop.body.items, [M.Simple(M.PROCESS, "count = count + 1")])
+
+    def test_overloaded_and_macro_increments_remain_explicit_cpp(self) -> None:
+        for code in (
+            "struct Counter{};int main(){Counter count;count++;}",
+            "#define count custom()\nint main(){int count;count++;}",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(chart(code).items[-1], M.Simple(M.PROCESS, "count++"))
+
+    def test_array_rank_distinguishes_matrices_from_arrays_of_pointers(self) -> None:
+        from blockwright.study import StudyBuilder
+
+        for code, expected in (
+            (b"int main(){int a[20][20], b[20]; int* pointers[20];}", {"a": 2, "b": 1}),
+            (b"int a[4];int main(){int a[4][4];}", {}),
+            (b"int main(){volatile int a[4][4];}", {}),
+        ):
+            with self.subTest(code=code):
+                tree, spec, _ = P.parse_source(code, P.guess_language("rank.cpp", ""))
+                function = tree.root_node.named_children[-1]
+                builder = StudyBuilder(code, options(), spec=spec)
+                builder.build_body(function.child_by_field_name("body"), is_main=True)
+                self.assertEqual(builder._array_ranks, expected)
+
+    def test_initialized_arrays_keep_values_without_type(self) -> None:
+        for declaration, text in (
+            ("bool seen[10] = {};", "seen[10] = {}"),
+            ("int a[3] = {1, 2, 3};", "a[3] = {1, 2, 3}"),
+            ("double matrix[2][2] = {};", "matrix[2][2] = {}"),
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertEqual(
+                    chart("int main(){" + declaration + "}").items,
+                    [M.Simple(M.PROCESS, text)],
+                )
+
+    def test_plain_declarations_are_hidden_and_explicit_values_remain(self) -> None:
+        body = chart(
+            'int main(){int n,i; int *p; double a[100]; std::string line; std::string label="имя"; int k=0; Widget work; return 0;}'
+        )
+        texts = [i.text for i in body.items if isinstance(i, M.Simple)]
+        self.assertEqual(texts, ['label = "имя"', "k = 0", "Widget work"])
+
+    def test_dynamic_input_prompt_is_part_of_input_but_effects_remain(self) -> None:
+        body = chart(
+            'int main(){int n=3,x; std::cout << "Введите " << n << " чисел:"; std::cin >> x; return 0;}'
+        )
+        self.assertEqual(body.items[1], M.Simple(M.INPUT, "Ввод x"))
+        for value in ("++n", "count()", "widget"):
+            body = chart(
+                'int main(){int n=3,x; Widget widget; std::cout << "Введите " << '
+                + value
+                + "; std::cin >> x; return 0;}"
+            )
+            self.assertTrue(
+                any(isinstance(i, M.Simple) and value in i.text for i in body.items)
+            )
+
     def test_hide_checks_keeps_lab2_algorithm_and_input(self) -> None:
         source = project.load(str(Path(__file__).parent / "fixtures/study/lab2.cpp"))
         body = project.charts(source, options(checks="hide"), source.known)[0].body

@@ -4,6 +4,7 @@ from typing import Any
 
 from . import model as M
 from .build import Builder
+from .output_study import array_caption, array_output
 from .text import normalize
 
 _MAX_INITIALIZATIONS = 3
@@ -50,6 +51,17 @@ class StudyBuilder(Builder):
                     name = self.raw(node.child_by_field_name("name"))
                     self._macro_names.add(name)
                     self._shadowed.add(name)
+                if node.type in {
+                    "class_specifier",
+                    "struct_specifier",
+                    "alias_declaration",
+                    "type_definition",
+                }:
+                    name = node.child_by_field_name("name") or node.child_by_field_name(
+                        "declarator"
+                    )
+                    if name is not None:
+                        self._shadowed.add(self.raw(name))
                 macro_nodes.extend(node.named_children)
             global_nodes = [root]
             while global_nodes:
@@ -85,6 +97,86 @@ class StudyBuilder(Builder):
                     if declarator is not None:
                         self._shadowed.add(self.raw(declarator))
             stack.extend(node.named_children)
+        self._identifier_positions = {}
+        for node in all_nodes:
+            if node.type == "identifier":
+                self._identifier_positions.setdefault(self.raw(node), set()).add(
+                    node.start_byte
+                )
+        self._identifier_positions = {
+            name: sorted(positions)
+            for name, positions in self._identifier_positions.items()
+        }
+        categories: dict[str, set[str]] = {}
+        array_ranks: dict[str, set[int]] = {}
+        for node in all_nodes:
+            if node.type not in {
+                "declaration",
+                "parameter_declaration",
+                "optional_parameter_declaration",
+            }:
+                continue
+            typ = node.child_by_field_name("type")
+            primitive = (
+                typ is not None
+                and typ.type in {"primitive_type", "sized_type_specifier"}
+                and self.raw(typ) not in self._macro_names
+                and not any(self.raw(c) == "volatile" for c in node.named_children)
+            )
+            for declarator in node.children_by_field_name("declarator"):
+                target = (
+                    declarator.child_by_field_name("declarator")
+                    if declarator.type == "init_declarator"
+                    else declarator
+                )
+                leaf = target
+                while leaf is not None and leaf.type != "identifier":
+                    nested = leaf.child_by_field_name("declarator")
+                    if (
+                        nested is None
+                        and leaf.type
+                        in {"reference_declarator", "parenthesized_declarator"}
+                        and leaf.named_child_count == 1
+                    ):
+                        nested = leaf.named_children[0]
+                    leaf = nested
+                if leaf is None:
+                    continue
+                category = "other"
+                if primitive and target.type == "identifier":
+                    category = (
+                        "scalar"
+                        if any(
+                            word in self.raw(typ)
+                            for word in ("float", "double", "void")
+                        )
+                        else "integer"
+                    )
+                elif primitive and target.type == "array_declarator":
+                    element = target
+                    rank = 0
+                    while element is not None and element.type == "array_declarator":
+                        rank += 1
+                        element = element.child_by_field_name("declarator")
+                    if element is not None and element.type == "identifier":
+                        category = "array"
+                        array_ranks.setdefault(self.raw(leaf), set()).add(rank)
+                categories.setdefault(self.raw(leaf), set()).add(category)
+        # Без разрешения областей видимости противоречивые объявления не сокращаем.
+        self._scalar_names = {
+            name for name, kinds in categories.items() if kinds <= {"integer", "scalar"}
+        } - self._macro_names
+        self._integer_names = {
+            name for name, kinds in categories.items() if kinds == {"integer"}
+        } - self._macro_names
+        self._array_names = {
+            name
+            for name, kinds in categories.items()
+            if kinds == {"array"} and len(array_ranks[name]) == 1
+        } - self._macro_names
+        self._array_ranks = {
+            name: next(iter(array_ranks[name])) for name in self._array_names
+        }
         self._sum_display = False
         for node in all_nodes:
             if node.type != "expression_statement":
@@ -195,7 +287,12 @@ class StudyBuilder(Builder):
 
     def _declaration(self, node: Any) -> list[object] | None:
         typ = node.child_by_field_name("type")
-        if typ is None or typ.type not in {"primitive_type", "sized_type_specifier"}:
+        if self.raw(typ) in self._macro_names:
+            return None
+        if typ is None or not (
+            typ.type in {"primitive_type", "sized_type_specifier"}
+            or self._name(typ, "string")
+        ):
             return None
         # volatile может выполнять наблюдаемые чтения/записи даже без вызовов.
         if any(
@@ -210,6 +307,13 @@ class StudyBuilder(Builder):
         for decl in declarations:
             if decl.type == "identifier":
                 continue
+            if decl.type == "pointer_declarator":
+                target = decl
+                while target is not None and target.type == "pointer_declarator":
+                    target = target.child_by_field_name("declarator")
+                if target is not None and target.type == "identifier":
+                    continue
+                return None
             if decl.type == "array_declarator":
                 size = decl.child_by_field_name("size")
                 if size is None or size.type not in {"number_literal", "identifier"}:
@@ -219,7 +323,11 @@ class StudyBuilder(Builder):
                 return None
             target = decl.child_by_field_name("declarator")
             value = decl.child_by_field_name("value")
-            if target is None or target.type != "identifier" or value is None:
+            if (
+                target is None
+                or target.type not in {"identifier", "array_declarator"}
+                or value is None
+            ):
                 return None
             texts.append(f"{self.t(target)} = {self.t(value)}")
         return [M.Simple(M.PROCESS, text) for text in texts]
@@ -269,7 +377,12 @@ class StudyBuilder(Builder):
         if node.type == "update_expression":
             arg = node.child_by_field_name("argument")
             op = self.op_of(node)
-            if arg is not None and arg.type == "identifier" and op in {"++", "--"}:
+            if (
+                arg is not None
+                and arg.type == "identifier"
+                and self.raw(arg) in self._scalar_names
+                and op in {"++", "--"}
+            ):
                 name = self.t(arg)
                 return M.Simple(
                     M.PROCESS, f"{name} = {name} {'+' if op == '++' else '-'} 1"
@@ -423,6 +536,9 @@ class StudyBuilder(Builder):
 
     def k_expression(self, n: Any, r: dict) -> list[object]:
         expr = self._expr(n)
+        update = self._unwrap(expr)
+        if update is not None and update.type == "update_expression":
+            return [self._simple_from_node(update)]
         if self._console_setup(expr):
             return []
         if (
@@ -442,7 +558,14 @@ class StudyBuilder(Builder):
             if (
                 stream
                 and stream[0] == M.OUTPUT
-                and all(self._display_manipulator(p) for p in stream[1])
+                and all(
+                    self._display_manipulator(p)
+                    or (
+                        (literal := self._string_value(p)) is not None
+                        and not literal.strip()
+                    )
+                    for p in stream[1]
+                )
             ):
                 return []
         return super().k_expression(n, r)
@@ -564,11 +687,21 @@ class StudyBuilder(Builder):
         stream = self._stream_parts(expr) if expr is not None else None
         if not stream or stream[0] != M.OUTPUT:
             return False
-        literals = [self._string_value(p) for p in stream[1]]
+        visible = [p for p in stream[1] if not self._display_manipulator(p)]
+        literals = [
+            value for p in visible if (value := self._string_value(p)) is not None
+        ]
         return (
             bool(literals)
-            and all(v is not None for v in literals)
-            and "".join(literals).strip().lower().startswith("введите")
+            and all(
+                self._string_value(p) is not None
+                or (p.type == "identifier" and self.raw(p) in self._scalar_names)
+                for p in visible
+            )
+            and "".join(literals)
+            .strip()
+            .lower()
+            .startswith(("введите", "enter", "input"))
         )
 
     def _read(self, node: Any, stream: str) -> str | None:
@@ -770,7 +903,10 @@ class StudyBuilder(Builder):
         return result
 
     def k_block(self, n: Any, r: dict) -> list[object]:
+        from .input_study import collect_input_groups
+
         nodes = [c for c in self.named(n) if c.type not in r.get("skip", ())]
+        input_plan = collect_input_groups(self, n, nodes)
         references: dict[str, set[int]] = {}
         buffers: dict[str, list[int]] = {}
         for position, node in enumerate(nodes):
@@ -792,11 +928,38 @@ class StudyBuilder(Builder):
             if (match := self._pipeline(nodes, i, references, buffers))
         }
         technical = {line for _, line in pipelines.values()}
+        array_outputs = {
+            i: value
+            for i, node in enumerate(nodes)
+            if (value := array_output(self, node)) is not None
+        }
         out = []
         index = 0
         output_values = None
         while index < len(nodes):
             node = nodes[index]
+            if index in input_plan.hidden:
+                index += 1
+                continue
+            if index in input_plan.groups:
+                group = input_plan.groups[index]
+                out.append(M.Simple(M.INPUT, group.text))
+                output_values = None
+                index = group.end
+                continue
+            if index + 1 in array_outputs and array_caption(self, node):
+                index += 1
+                continue
+            if index in array_outputs:
+                values = [array_outputs[index]]
+                if output_values and out and out[-1].kind == M.OUTPUT:
+                    output_values.extend(values)
+                    out[-1].text = "Вывод " + ", ".join(output_values)
+                else:
+                    out.append(M.Simple(M.OUTPUT, "Вывод " + values[0]))
+                    output_values = values
+                index += 1
+                continue
             initializations = self._literal_initializations(node)
             if initializations:
                 next_index = index + 1
