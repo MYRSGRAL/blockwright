@@ -47,6 +47,28 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_plain_declarations_are_hidden_and_explicit_values_remain(self) -> None:
+        body = chart(
+            'int main(){int n,i; int *p; double a[100]; std::string line; std::string label="имя"; int k=0; Widget work; return 0;}'
+        )
+        texts = [i.text for i in body.items if isinstance(i, M.Simple)]
+        self.assertEqual(texts, ['label = "имя"', "k = 0", "Widget work"])
+
+    def test_dynamic_input_prompt_is_part_of_input_but_effects_remain(self) -> None:
+        body = chart(
+            'int main(){int n=3,x; std::cout << "Введите " << n << " чисел:"; std::cin >> x; return 0;}'
+        )
+        self.assertEqual(body.items[1], M.Simple(M.INPUT, "Ввод x"))
+        for value in ("++n", "count()", "widget"):
+            body = chart(
+                'int main(){int n=3,x; Widget widget; std::cout << "Введите " << '
+                + value
+                + "; std::cin >> x; return 0;}"
+            )
+            self.assertTrue(
+                any(isinstance(i, M.Simple) and value in i.text for i in body.items)
+            )
+
     def test_hide_checks_keeps_lab2_algorithm_and_input(self) -> None:
         source = project.load(str(Path(__file__).parent / "fixtures/study/lab2.cpp"))
         body = project.charts(source, options(checks="hide"), source.known)[0].body
