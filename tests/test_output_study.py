@@ -7,6 +7,10 @@ from tests.test_study import chart
 
 
 class ArrayOutput(unittest.TestCase):
+    def test_printing_matrix_row_addresses_is_not_element_output(self) -> None:
+        body = chart("int main(){int a[4][4];for(int i=0;i<4;i++){std::cout << a[i];}}")
+        self.assertTrue(any(isinstance(item, M.ForLoop) for item in body.items))
+
     def test_whitespace_output_does_not_create_a_block(self) -> None:
         for expression in (r"'\n'", r'" \t\n"', '""', "std::endl", r"' ' << std::endl"):
             with self.subTest(expression=expression):

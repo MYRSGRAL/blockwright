@@ -13,6 +13,16 @@ from blockwright.cli import Opts, build_parser, main
 
 
 class Product(unittest.TestCase):
+    def test_matrix_protocol_is_hidden_in_generated_svg(self) -> None:
+        source = Path(__file__).parent / "fixtures/study/matrix.cpp"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
+            svg = (Path(tmp) / "matrix__main.svg").read_text(encoding="utf-8")
+            for label in ("Ввод n, m", "Ввод a[n][m]", "Вывод b[n]", "b[i] = a[i][0]"):
+                self.assertIn(label, svg)
+            for label in ("Введите", "Ошибка", "istringstream", "input.str", "isspace"):
+                self.assertNotIn(label, svg)
+
     def test_direct_array_input_is_compact_in_generated_svg(self) -> None:
         from tests.test_input_study import DIRECT_CODE
 

@@ -1,5 +1,6 @@
 """Группы проверяемого ввода с повторным использованием строкового буфера."""
 
+import re
 import unittest
 from collections.abc import Iterator
 from pathlib import Path
@@ -174,6 +175,7 @@ class InputGroups(unittest.TestCase):
                 for text in texts
             )
         )
+
         self.assertIn("n = k", texts)
 
     def test_direct_standalone_reads_and_adjacent_checks(self) -> None:
@@ -433,6 +435,135 @@ class InputGroups(unittest.TestCase):
                 for item in walk(body)
             )
         )
+
+
+class MatrixInputGroups(unittest.TestCase):
+    @staticmethod
+    def source() -> str:
+        return (Path(__file__).parent / "fixtures/study/matrix.cpp").read_text(
+            encoding="utf-8"
+        )
+
+    def assert_matrix_input(
+        self, code: str, dimensions: str = "n, m", array: str = "a[n][m]"
+    ) -> M.Seq:
+        body = build(code)
+        inputs = [
+            item.text
+            for item in walk(body)
+            if isinstance(item, M.Simple) and item.kind == M.INPUT
+        ]
+        self.assertEqual(inputs, ["Ввод " + dimensions, "Ввод " + array])
+        return body
+
+    def test_current_matrix_hides_only_the_reading_protocol(self) -> None:
+        body = self.assert_matrix_input(self.source())
+        self.assertEqual(
+            sum(isinstance(item, (M.ForLoop, M.While)) for item in walk(body)), 2
+        )
+        self.assertTrue(
+            any(
+                isinstance(item, M.If) and item.cond == "a[i][j] > b[i]"
+                for item in walk(body)
+            )
+        )
+        texts = [item.text for item in walk(body) if isinstance(item, M.Simple)]
+        self.assertIn("b[i] = a[i][0]", texts)
+        self.assertIn("b[i] = a[i][j]", texts)
+        self.assertIn("Вывод b[n]", texts)
+        self.assertFalse(
+            any(
+                "input" in text
+                or "line" in text
+                or "Ошибка" in text
+                or "Введите" in text
+                for text in texts
+            )
+        )
+
+    def test_matrix_names_and_optional_boundary_checks_are_generic(self) -> None:
+        code = self.source()
+        for name, replacement in (
+            ("a", "matrix"),
+            ("n", "rows"),
+            ("m", "columns"),
+            ("i", "row"),
+            ("j", "column"),
+        ):
+            code = re.sub(r"\b" + name + r"\b", replacement, code)
+        self.assert_matrix_input(code, "rows, columns", "matrix[rows][columns]")
+        code = (
+            self.source()
+            .replace("(!input.eof() && !isspace(input.peek())) ||", "")
+            .replace(
+                " ||\n                    (!input.eof() && !isspace(input.peek()))", ""
+            )
+        )
+        self.assert_matrix_input(code)
+
+    def test_constructor_per_row_matches_reused_reset_stream(self) -> None:
+        code = self.source().replace("    istringstream input;\n", "")
+        code = code.replace("input.str(line);", "istringstream input(line);", 1)
+        first = code.index("for (i = 0; i < n; i++)")
+        second = code.index("for (i = 0; i < n; i++)", first + 1)
+        row = (
+            code[first:second]
+            .replace("input.clear();", "")
+            .replace("input.str(line);", "istringstream rowInput(line);")
+            .replace("input.", "rowInput.")
+            .replace("input >>", "rowInput >>")
+        )
+        self.assert_matrix_input(code[:first] + row + code[second:])
+
+    def test_direct_cin_nested_matrix_uses_the_same_rank_rules(self) -> None:
+        body = build(
+            'int main(){int a[20][20];int n=2,m=3;for(int row=0;row<n;row++){for(int column=0;column<m;column++){if(!(cin>>a[row][column])){cout<<"Ошибка";return 1;}}}return 0;}'
+        )
+        self.assertIn(M.Simple(M.INPUT, "Ввод a[n][m]"), body.items)
+        self.assertFalse(any(isinstance(item, M.ForLoop) for item in walk(body)))
+
+    def test_matrix_effects_macros_and_external_state_force_fallback(self) -> None:
+        source = self.source()
+        first = source.index("for (i = 0; i < n; i++)")
+        second = source.index("for (i = 0; i < n; i++)", first + 1)
+        cases = [
+            source.replace("isspace(input.peek())", "classify(input.peek())"),
+            source.replace("<< m\n", "<< ++m\n"),
+            source.replace("return 1;", "audit();return 1;"),
+            "#define peek change_state\n" + source,
+            "#define isspace custom_space\n" + source,
+            "int isspace(int x){return x;}\n" + source,
+            source[:second] + "observe(input.eof());" + source[second:],
+            source[:second] + "use(line);" + source[second:],
+            source[:second] + "use(j);" + source[second:],
+            source.replace("string line;", 'string line; string other; other="value";')
+            .replace("line.clear();", "other.clear();")
+            .replace(
+                '        cout << "Массив максимумов строк:";',
+                '        use(other); cout << "Массив максимумов строк:";',
+            ),
+        ]
+        for number, code in enumerate(cases):
+            with self.subTest(case=number):
+                body = build(code)
+                self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n][m]"), body.items)
+
+    def test_show_and_full_keep_matrix_input_conditions(self) -> None:
+        for opts in ({"checks": "show"}, {"study": False}):
+            with self.subTest(opts=opts):
+                body = build(self.source(), **opts)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "input >> n" in item.cond
+                        for item in walk(body)
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "input >> a[i][j]" in item.cond
+                        for item in walk(body)
+                    )
+                )
 
 
 if __name__ == "__main__":

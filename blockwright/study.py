@@ -108,6 +108,7 @@ class StudyBuilder(Builder):
             for name, positions in self._identifier_positions.items()
         }
         categories: dict[str, set[str]] = {}
+        array_ranks: dict[str, set[int]] = {}
         for node in all_nodes:
             if node.type not in {
                 "declaration",
@@ -151,12 +152,15 @@ class StudyBuilder(Builder):
                         )
                         else "integer"
                     )
-                elif (
-                    primitive
-                    and target.type == "array_declarator"
-                    and target.child_by_field_name("declarator").type == "identifier"
-                ):
-                    category = "array"
+                elif primitive and target.type == "array_declarator":
+                    element = target
+                    rank = 0
+                    while element is not None and element.type == "array_declarator":
+                        rank += 1
+                        element = element.child_by_field_name("declarator")
+                    if element is not None and element.type == "identifier":
+                        category = "array"
+                        array_ranks.setdefault(self.raw(leaf), set()).add(rank)
                 categories.setdefault(self.raw(leaf), set()).add(category)
         # Без разрешения областей видимости противоречивые объявления не сокращаем.
         self._scalar_names = {
@@ -166,8 +170,13 @@ class StudyBuilder(Builder):
             name for name, kinds in categories.items() if kinds == {"integer"}
         } - self._macro_names
         self._array_names = {
-            name for name, kinds in categories.items() if kinds == {"array"}
+            name
+            for name, kinds in categories.items()
+            if kinds == {"array"} and len(array_ranks[name]) == 1
         } - self._macro_names
+        self._array_ranks = {
+            name: next(iter(array_ranks[name])) for name in self._array_names
+        }
         self._sum_display = False
         for node in all_nodes:
             if node.type != "expression_statement":

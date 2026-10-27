@@ -23,6 +23,16 @@ class InputPlan:
     hidden: set[int] = field(default_factory=set)
 
 
+@dataclass
+class _RankRead:
+    array: str
+    bounds: list[str]
+    indices: list[tuple[str, bool]]
+    buffer: str = ""
+    stream: str = ""
+    scratch: str = ""
+
+
 class _Recognizer:
     def __init__(self, builder: Any, nodes: list[Any]) -> None:
         self.b = builder
@@ -30,6 +40,7 @@ class _Recognizer:
         self.references: dict[str, set[int]] = {}
         self.declarations: dict[str, tuple[int, Any]] = {}
         self.buffers: dict[str, int] = {}
+        self.streams: dict[str, int] = {}
         self.index_escapes: dict[str, set[int]] = {}
         for position, node in enumerate(nodes):
             for child in self.walk(node):
@@ -78,9 +89,17 @@ class _Recognizer:
             if (
                 target is not None
                 and target.type == "identifier"
+                and len(node.children_by_field_name("declarator")) == 1
                 and builder._name(node.child_by_field_name("type"), "string")
             ):
                 self.buffers[builder.raw(target)] = position
+            if (
+                target is not None
+                and target.type == "identifier"
+                and len(node.children_by_field_name("declarator")) == 1
+                and builder._name(node.child_by_field_name("type"), "istringstream")
+            ):
+                self.streams[builder.raw(target)] = position
 
     @staticmethod
     def walk(node: Any) -> Iterator[Any]:
@@ -109,24 +128,70 @@ class _Recognizer:
         return result
 
     def read(self, node: Any, stream: str) -> Any:
+        targets = self.read_targets(node, stream)
+        return targets[0] if len(targets) == 1 else None
+
+    def read_targets(self, node: Any, stream: str) -> list[Any]:
         node = self.b._unwrap(node)
         if node is None or self.b.op_of(node) != ">>":
-            return None
+            return []
         if not stream:
             parts = self.b._stream_parts(node)
-            return (
-                parts[1][0]
-                if parts and parts[0] == M.INPUT and len(parts[1]) == 1
-                else None
-            )
-        left, right = self.b.sides(node)
-        return right if left is not None and self.b.raw(left) == stream else None
+            return parts[1] if parts and parts[0] == M.INPUT else []
+        parts = self.b._flatten_stream(node, ">>")
+        return parts[1:] if self.b.raw(parts[0]) == stream else []
 
-    def failed_read(self, node: Any, stream: str) -> Any:
+    def failed_targets(self, node: Any, stream: str) -> list[Any]:
         node = self.b._unwrap(node)
         if node is None or node.type != "unary_expression" or self.b.op_of(node) != "!":
+            return []
+        return self.read_targets(node.child_by_field_name("argument"), stream)
+
+    def failed_read(self, node: Any, stream: str) -> Any:
+        targets = self.failed_targets(node, stream)
+        return targets[0] if len(targets) == 1 else None
+
+    def member(self, node: Any, owner: str, method: str) -> list[Any] | None:
+        node = self.b._unwrap(self.b._expr(node))
+        if node is None or node.type != "call_expression":
             return None
-        return self.read(node.child_by_field_name("argument"), stream)
+        function = node.child_by_field_name("function")
+        if function is None or function.type != "field_expression":
+            return None
+        if (
+            self.b.raw(function.child_by_field_name("argument")) != owner
+            or self.b.raw(function.child_by_field_name("field")) != method
+            or self.b.raw(function.child_by_field_name("operator")) != "."
+        ):
+            return None
+        return self.b.call_args(node)
+
+    def negated(self, node: Any) -> Any:
+        node = self.b._unwrap(node)
+        return (
+            self.b._unwrap(node.child_by_field_name("argument"))
+            if node is not None
+            and node.type == "unary_expression"
+            and self.b.op_of(node) == "!"
+            else None
+        )
+
+    def boundary(self, node: Any, stream: str) -> bool:
+        node = self.b._unwrap(node)
+        if not stream or self.b.op_of(node) != "&&":
+            return False
+        left, right = self.b.sides(node)
+        eof, space = self.negated(left), self.negated(right)
+        if (
+            eof is None
+            or space is None
+            or self.member(eof, stream, "eof") != []
+            or space.type != "call_expression"
+            or not self.b._name(space.child_by_field_name("function"), "isspace")
+        ):
+            return False
+        args = self.b.call_args(space)
+        return len(args) == 1 and self.member(args[0], stream, "peek") == []
 
     def cin_failed(self, node: Any) -> bool:
         node = self.b._unwrap(node)
@@ -200,29 +265,43 @@ class _Recognizer:
                 return False
         return literal
 
-    def scalar_check(self, node: Any, stream: str) -> tuple[str, str] | None:
+    def scalar_check(self, node: Any, stream: str) -> tuple[list[str], str] | None:
         condition = self.condition(node)
         if condition is None:
             return None
         atoms = self.atoms(condition)
         if atoms and self.cin_failed(atoms[0]):
             atoms = atoms[1:]
-        if not atoms or (stream and len(atoms) < 2):
+        names: list[str] = []
+        scratch = ""
+        reading = True
+        for atom in atoms:
+            targets = self.failed_targets(atom, stream) if reading else []
+            if targets:
+                if scratch or not all(self.scalar(target) for target in targets):
+                    return None
+                for target in targets:
+                    name = self.b.raw(target)
+                    if name in names:
+                        return None
+                    names.append(name)
+            elif reading and names and self.boundary(atom, stream):
+                continue
+            elif reading and stream and names and (extra := self.extra(atom, stream)):
+                if extra in names:
+                    return None
+                scratch, reading = extra, False
+            else:
+                reading = False
+                if not names or not self.validation_atoms([atom], set(names)):
+                    return None
+        if (
+            not names
+            or (stream and not scratch)
+            or not self.error_exit(node, set(names))
+        ):
             return None
-        target = self.failed_read(atoms[0], stream)
-        if not self.scalar(target):
-            return None
-        name = self.b.raw(target)
-        extra = ""
-        rest = atoms[1:]
-        if stream:
-            extra = self.extra(atoms[1], stream)
-            if not extra or extra == name:
-                return None
-            rest = atoms[2:]
-        if not self.validation_atoms(rest, {name}):
-            return None
-        return (name, extra) if self.error_exit(node, {name}) else None
+        return names, scratch
 
     def validation_atoms(self, atoms: list[Any], names: set[str]) -> bool:
         for atom in atoms:
@@ -384,7 +463,7 @@ class _Recognizer:
             scalar = self.scalar_check(node, "")
             if scalar is None:
                 return None
-            names = [scalar[0]]
+            names = scalar[0]
         elif node.type == "expression_statement":
             stream = self.b._stream_parts(self.b._expr(node))
             if (
@@ -432,19 +511,28 @@ class _Recognizer:
         )
 
     def array(self, node: Any, index: str) -> str | None:
-        if node is None or node.type != "subscript_expression":
-            return None
-        argument = node.child_by_field_name("argument")
-        indices = node.child_by_field_name("indices")
+        return self.array_coordinates(node, [index])
+
+    def array_coordinates(self, node: Any, coordinates: list[str]) -> str | None:
+        indices = []
+        while node is not None and node.type == "subscript_expression":
+            arguments = node.child_by_field_name("indices")
+            if arguments is None or len(arguments.named_children) != 1:
+                return None
+            index = arguments.named_children[0]
+            if index.type != "identifier":
+                return None
+            indices.append(self.b.raw(index))
+            node = node.child_by_field_name("argument")
         if (
-            argument is None
-            or argument.type != "identifier"
-            or indices is None
-            or len(indices.named_children) != 1
-            or self.b.raw(indices.named_children[0]) != index
+            node is None
+            or node.type != "identifier"
+            or list(reversed(indices)) != coordinates
         ):
             return None
-        name = self.b.raw(argument)
+        name = self.b.raw(node)
+        if getattr(self.b, "_array_ranks", {}).get(name) != len(coordinates):
+            return None
         declaration = self.declarations.get(name)
         if declaration is None:
             return None
@@ -501,27 +589,214 @@ class _Recognizer:
             return False
         if any(position < end for position in self.index_escapes.get(index, set())):
             return False
-        # Первое следующее использование должно заново задать индекс.
-        for position in sorted(self.references.get(index, set())):
-            if position < end:
-                continue
-            node = self.nodes[position]
+        live = True
+        for node in self.nodes[end:]:
+            safe, live = self.index_flow(node, index, live)
+            if not safe:
+                return False
+        return True
+
+    def index_flow(self, node: Any, index: str, live: bool) -> tuple[bool, bool]:
+        if not live:
+            return True, False
+        expression = self.b._expr(node)
+        if (
+            expression.type == "assignment_expression"
+            and self.b.op_of(expression) == "="
+        ):
+            left, right = self.b.sides(expression)
             if (
-                node.type == "for_statement"
-                and self.local_index(node.child_by_field_name("initializer")) == index
+                self.b.raw(left) == index
+                and right is not None
+                and right.type == "number_literal"
+            ):
+                return True, False
+        if node.type == "compound_statement":
+            for statement in self.b._statements(node):
+                safe, live = self.index_flow(statement, index, live)
+                if not safe:
+                    return False, live
+            return True, live
+        if node.type == "for_statement":
+            initializer = node.child_by_field_name("initializer")
+            if self.local_index(initializer) == index:
+                return True, live
+            if initializer is not None:
+                safe, live = self.index_flow(initializer, index, live)
+                if not safe:
+                    return False, live
+            for field in ("condition", "update"):
+                part = node.child_by_field_name(field)
+                if part is not None and live and self.references_name(part, index):
+                    return False, live
+            safe, _ = self.index_flow(node.child_by_field_name("body"), index, live)
+            return safe, live
+        return not self.references_name(node, index), live
+
+    def references_name(self, node: Any, name: str) -> bool:
+        return any(
+            child.type == "identifier" and self.b.raw(child) == name
+            for child in self.walk(node)
+        )
+
+    def setup(
+        self, nodes: list[Any], start: int, *, row: bool = False
+    ) -> tuple[int, str, str] | None:
+        position = start
+        cleared_buffer = ""
+        if position >= len(nodes):
+            return None
+        for buffer in self.buffers:
+            if self.member(nodes[position], buffer, "clear") == []:
+                cleared_buffer = buffer
+                position += 1
+                break
+        if position >= len(nodes):
+            return None
+        call = self.b._expr(nodes[position])
+        if (
+            call is None
+            or call.type != "call_expression"
+            or not self.b._name(call.child_by_field_name("function"), "getline")
+        ):
+            return None
+        args = self.b.call_args(call)
+        if (
+            len(args) != 2
+            or not self.b._name(args[0], "cin")
+            or args[1].type != "identifier"
+        ):
+            return None
+        buffer = self.b.raw(args[1])
+        if cleared_buffer and cleared_buffer != buffer:
+            return None
+        if buffer not in self.buffers or position + 1 >= len(nodes):
+            return None
+        position += 1
+        declaration = nodes[position]
+        if (
+            declaration.type == "declaration"
+            and self.b._name(declaration.child_by_field_name("type"), "istringstream")
+            and len(declaration.children_by_field_name("declarator")) == 1
+        ):
+            declarator = declaration.child_by_field_name("declarator")
+            name = declarator.child_by_field_name("declarator")
+            params = declarator.child_by_field_name("parameters")
+            if (
+                declarator.type == "function_declarator"
+                and name is not None
+                and name.type == "identifier"
+                and params is not None
+                and "".join(self.b.raw(params).split()) == f"({buffer})"
+            ):
+                return position + 1, buffer, self.b.raw(name)
+            return None
+        for stream, declaration_position in self.streams.items():
+            cursor = position
+            reset = self.member(nodes[cursor], stream, "clear") == []
+            if reset:
+                cursor += 1
+            if cursor >= len(nodes):
+                continue
+            arguments = self.member(nodes[cursor], stream, "str")
+            if (
+                arguments is None
+                or len(arguments) != 1
+                or arguments[0].type != "identifier"
+                or self.b.raw(arguments[0]) != buffer
             ):
                 continue
-            initializer = (
-                node.child_by_field_name("initializer")
-                if node.type == "for_statement"
-                else node
+            if not reset and (
+                row
+                or any(
+                    declaration_position < use < start
+                    for use in self.references.get(stream, set())
+                )
+            ):
+                continue
+            return cursor + 1, buffer, stream
+        return None
+
+    def rank_element(
+        self, statements: list[Any], stream: str, indices: list[str], bounds: list[str]
+    ) -> str | None:
+        if not statements:
+            return None
+        check = statements[0]
+        if check.type == "if_statement" and len(statements) == 1:
+            condition = self.condition(check)
+            if condition is None:
+                return None
+            atoms = self.atoms(condition)
+            target = self.failed_read(atoms[0], stream)
+            array = self.array_coordinates(target, indices)
+            if (
+                array
+                and all(self.boundary(atom, stream) for atom in atoms[1:])
+                and self.error_exit(check, set(bounds))
+            ):
+                return array
+        if len(statements) == 1 and check.type == "expression_statement":
+            return self.array_coordinates(
+                self.read(self.b._expr(check), stream), indices
             )
-            return (
-                self.zero_assignment(initializer) == index
-                if initializer is not None
-                else False
-            )
-        return True
+        return None
+
+    def rank_loop(
+        self,
+        node: Any,
+        parents: list[tuple[str, bool]],
+        dimensions: list[str],
+        stream: str = "",
+    ) -> _RankRead | None:
+        if node.type != "for_statement":
+            return None
+        initializer = node.child_by_field_name("initializer")
+        local = self.local_index(initializer)
+        index = local or (
+            self.zero_assignment(initializer) if initializer is not None else None
+        )
+        if not index or index in {name for name, _ in parents}:
+            return None
+        count = self.bound(node.child_by_field_name("condition"), index)
+        update = node.child_by_field_name("update")
+        if not count or update is None or not self.increment(update, index):
+            return None
+        indices = parents + [(index, local is not None)]
+        bounds = dimensions + [count]
+        body = self.b._statements(node.child_by_field_name("body"))
+        if len(body) == 1 and body[0].type == "for_statement":
+            return self.rank_loop(body[0], indices, bounds, stream)
+        array = self.rank_element(body, stream, [name for name, _ in indices], bounds)
+        if array:
+            return _RankRead(array, bounds, indices, stream=stream)
+        setup = self.setup(body, 0, row=True)
+        if setup is None:
+            return None
+        position, buffer, row_stream = setup
+        if len(body) != position + 2:
+            return None
+        inner = self.rank_loop(body[position], indices, bounds, row_stream)
+        if inner is None or inner.buffer:
+            return None
+        extra = self.tail(body[position + 1], row_stream, inner.bounds[-1])
+        if not extra:
+            return None
+        inner.buffer, inner.stream, inner.scratch = buffer, row_stream, extra
+        return inner
+
+    def ranked_candidate(self, position: int) -> InputGroup | None:
+        rank = self.rank_loop(self.nodes[position], [], [])
+        if rank is None or len(rank.bounds) < 2:
+            return None
+        end = position + 1
+        if any(
+            not local and not self.index_disposable(index, end)
+            for index, local in rank.indices
+        ):
+            return None
+        target = rank.array + "".join(f"[{bound}]" for bound in rank.bounds)
+        return InputGroup(end, "Ввод " + target, rank.buffer, rank.stream, rank.scratch)
 
     def array_check(self, start: int, stream: str) -> tuple[int, str, str, str] | None:
         node = self.nodes[start]
@@ -589,6 +864,16 @@ class _Recognizer:
         return end, f"{array}[{count}]", extra, index
 
     def candidate(self, position: int) -> InputGroup | None:
+        setup = self.setup(self.nodes, position)
+        if setup is not None:
+            end, buffer, stream = setup
+            if end < len(self.nodes) and self.nodes[end].type == "if_statement":
+                scalar = self.scalar_check(self.nodes[end], stream)
+                if scalar:
+                    targets, scratch = scalar
+                    return InputGroup(
+                        end + 1, "Ввод " + ", ".join(targets), buffer, stream, scratch
+                    )
         if position + 2 >= len(self.nodes):
             return None
         call = self.b._expr(self.nodes[position])
@@ -641,8 +926,10 @@ class _Recognizer:
             self.scalar_check(check, stream) if check.type == "if_statement" else None
         )
         if scalar:
-            target, scratch = scalar
-            return InputGroup(position + 3, "Ввод " + target, buffer, stream, scratch)
+            targets, scratch = scalar
+            return InputGroup(
+                position + 3, "Ввод " + ", ".join(targets), buffer, stream, scratch
+            )
         array = self.array_check(position + 2, stream)
         if array:
             end, target, scratch, index = array
@@ -702,18 +989,18 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
                 return plan
     candidates = {}
     for position in range(len(nodes)):
-        group = recognizer.candidate(position) or recognizer.direct(position)
+        group = (
+            recognizer.candidate(position)
+            or recognizer.ranked_candidate(position)
+            or recognizer.direct(position)
+        )
         if group is None:
             continue
         if any(
             builder.raw(child) in builder._macro_names
             for node in nodes[position : group.end]
             for child in recognizer.walk(node)
-            if child.type in {"identifier", "type_identifier"}
-        ):
-            continue
-        if group.stream and recognizer.references.get(group.stream, set()) - set(
-            range(position, group.end)
+            if child.type in {"identifier", "type_identifier", "field_identifier"}
         ):
             continue
         start = (
@@ -731,7 +1018,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         }
         invalid = set()
         for start, group in candidates.items():
-            for name in (group.buffer, group.scratch):
+            for name in (group.buffer, group.scratch, group.stream):
                 if not name:
                     continue
                 declaration = recognizer.declarations.get(name)
@@ -751,4 +1038,9 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         for group in candidates.values()
         if group.buffer
     }
+    plan.hidden.update(
+        recognizer.streams[group.stream]
+        for group in candidates.values()
+        if group.stream in recognizer.streams
+    )
     return plan

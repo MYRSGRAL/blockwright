@@ -47,6 +47,21 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_array_rank_distinguishes_matrices_from_arrays_of_pointers(self) -> None:
+        from blockwright.study import StudyBuilder
+
+        for code, expected in (
+            (b"int main(){int a[20][20], b[20]; int* pointers[20];}", {"a": 2, "b": 1}),
+            (b"int a[4];int main(){int a[4][4];}", {}),
+            (b"int main(){volatile int a[4][4];}", {}),
+        ):
+            with self.subTest(code=code):
+                tree, spec, _ = P.parse_source(code, P.guess_language("rank.cpp", ""))
+                function = tree.root_node.named_children[-1]
+                builder = StudyBuilder(code, options(), spec=spec)
+                builder.build_body(function.child_by_field_name("body"), is_main=True)
+                self.assertEqual(builder._array_ranks, expected)
+
     def test_initialized_arrays_keep_values_without_type(self) -> None:
         for declaration, text in (
             ("bool seen[10] = {};", "seen[10] = {}"),

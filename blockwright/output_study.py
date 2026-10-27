@@ -103,6 +103,7 @@ def _array_loop(builder: Any, node: Any) -> tuple[str, str] | None:
                 array is None
                 or array.type != "identifier"
                 or builder.raw(array) not in builder._array_names
+                or builder._array_ranks.get(builder.raw(array)) != 1
                 or indices is None
             ):
                 return None
