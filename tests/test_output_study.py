@@ -7,6 +7,29 @@ from tests.test_study import chart
 
 
 class ArrayOutput(unittest.TestCase):
+    def test_whitespace_output_does_not_create_a_block(self) -> None:
+        for expression in (r"'\n'", r'" \t\n"', '""', "std::endl", r"' ' << std::endl"):
+            with self.subTest(expression=expression):
+                body = chart("int main(){std::cout << " + expression + ";}")
+                self.assertEqual(body.items, [])
+
+    def test_nonempty_output_and_output_effects_remain(self) -> None:
+        for expression in ("'!'", '"Готово"', "next()", "++counter"):
+            with self.subTest(expression=expression):
+                body = chart(
+                    "int main(){int counter=0; std::cout << " + expression + ";}"
+                )
+                self.assertTrue(
+                    any(
+                        isinstance(i, M.Simple) and i.kind == M.OUTPUT
+                        for i in body.items
+                    )
+                )
+
+    def test_detailed_mode_preserves_whitespace_output(self) -> None:
+        body = chart(r"int main(){std::cout << '\n';}", study=False)
+        self.assertEqual(body.items, [M.Simple(M.IO, "Перевод строки")])
+
     def test_shadowed_array_types_and_fractional_lengths_remain_explicit(self) -> None:
         for code in (
             "int a[4]; struct Item{operator int()const;}; int main(){Item a[4]; int n=4; for(int i=0;i<n;i++) std::cout << a[i];}",

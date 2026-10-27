@@ -11,9 +11,9 @@ from . import model as M
 class InputGroup:
     end: int
     text: str
-    buffer: str
-    stream: str
-    scratch: str
+    buffer: str = ""
+    stream: str = ""
+    scratch: str = ""
     index: str = ""
 
 
@@ -30,10 +30,42 @@ class _Recognizer:
         self.references: dict[str, set[int]] = {}
         self.declarations: dict[str, tuple[int, Any]] = {}
         self.buffers: dict[str, int] = {}
+        self.index_escapes: dict[str, set[int]] = {}
         for position, node in enumerate(nodes):
             for child in self.walk(node):
                 if child.type in {"identifier", "type_identifier"}:
                     self.references.setdefault(builder.raw(child), set()).add(position)
+                if child.type == "pointer_expression" and builder.op_of(child) == "&":
+                    argument = child.child_by_field_name("argument")
+                    if argument is not None and argument.type == "identifier":
+                        self.index_escapes.setdefault(builder.raw(argument), set()).add(
+                            position
+                        )
+                if child.type == "init_declarator":
+                    declarator = child.child_by_field_name("declarator")
+                    value = child.child_by_field_name("value")
+                    if (
+                        declarator is not None
+                        and declarator.type == "reference_declarator"
+                        and value is not None
+                        and value.type == "identifier"
+                    ):
+                        self.index_escapes.setdefault(builder.raw(value), set()).add(
+                            position
+                        )
+                if child.type == "call_expression":
+                    for argument in builder.call_args(child):
+                        if argument.type == "identifier":
+                            self.index_escapes.setdefault(
+                                builder.raw(argument), set()
+                            ).add(position)
+                if child.type == "lambda_expression":
+                    # Без анализа захватов сохраняем все используемые замыканием имена.
+                    for reference in self.walk(child):
+                        if reference.type == "identifier":
+                            self.index_escapes.setdefault(
+                                builder.raw(reference), set()
+                            ).add(position)
             if node.type != "declaration":
                 continue
             for declarator in node.children_by_field_name("declarator"):
@@ -80,6 +112,13 @@ class _Recognizer:
         node = self.b._unwrap(node)
         if node is None or self.b.op_of(node) != ">>":
             return None
+        if not stream:
+            parts = self.b._stream_parts(node)
+            return (
+                parts[1][0]
+                if parts and parts[0] == M.INPUT and len(parts[1]) == 1
+                else None
+            )
         left, right = self.b.sides(node)
         return right if left is not None and self.b.raw(left) == stream else None
 
@@ -91,6 +130,16 @@ class _Recognizer:
 
     def cin_failed(self, node: Any) -> bool:
         node = self.b._unwrap(node)
+        if node.type == "call_expression":
+            function = node.child_by_field_name("function")
+            return (
+                function is not None
+                and function.type == "field_expression"
+                and self.b._name(function.child_by_field_name("argument"), "cin")
+                and self.b.raw(function.child_by_field_name("operator")) == "."
+                and self.b.raw(function.child_by_field_name("field")) == "fail"
+                and not self.b.call_args(node)
+            )
         return (
             node.type == "unary_expression"
             and self.b.op_of(node) == "!"
@@ -158,27 +207,202 @@ class _Recognizer:
         atoms = self.atoms(condition)
         if atoms and self.cin_failed(atoms[0]):
             atoms = atoms[1:]
-        if len(atoms) < 2:
+        if not atoms or (stream and len(atoms) < 2):
             return None
         target = self.failed_read(atoms[0], stream)
         if not self.scalar(target):
             return None
         name = self.b.raw(target)
-        extra = self.extra(atoms[1], stream)
-        if not extra or extra == name:
+        extra = ""
+        rest = atoms[1:]
+        if stream:
+            extra = self.extra(atoms[1], stream)
+            if not extra or extra == name:
+                return None
+            rest = atoms[2:]
+        if not self.validation_atoms(rest, {name}):
             return None
-        for atom in atoms[2:]:
-            if self.b._finite(atom) == (name, True):
+        return (name, extra) if self.error_exit(node, {name}) else None
+
+    def validation_atoms(self, atoms: list[Any], names: set[str]) -> bool:
+        for atom in atoms:
+            if self.cin_failed(atom):
+                continue
+            if any(self.b._finite(atom) == (name, True) for name in names):
                 continue
             left, right = self.b.sides(atom)
-            if self.b.op_of(atom) not in {"<", "<=", ">", ">="}:
-                return None
+            if self.b.op_of(atom) not in {"<", "<=", ">", ">=", "==", "!="}:
+                return False
             if not (
-                (self.b.raw(left) == name and self.value(right))
-                or (self.b.raw(right) == name and self.value(left))
+                (self.b.raw(left) in names and self.value(right))
+                or (self.b.raw(right) in names and self.value(left))
             ):
+                return False
+        return True
+
+    def direct_validation(self, node: Any, names: set[str]) -> bool:
+        if node.type != "if_statement":
+            return False
+        condition = self.condition(node)
+        return (
+            condition is not None
+            and self.validation_atoms(self.atoms(condition), names)
+            and self.error_exit(node, names)
+        )
+
+    def local_index(self, node: Any) -> str | None:
+        if (
+            node is None
+            or node.type != "declaration"
+            or len(node.children_by_field_name("declarator")) != 1
+        ):
+            return None
+        typ = node.child_by_field_name("type")
+        if (
+            typ is None
+            or self.b.raw(typ) != "int"
+            or any(
+                self.b.raw(child)
+                in {"static", "volatile", "const", "extern", "thread_local"}
+                for child in node.named_children
+            )
+        ):
+            return None
+        declarator = node.child_by_field_name("declarator")
+        target = declarator.child_by_field_name("declarator")
+        value = declarator.child_by_field_name("value")
+        if (
+            target is not None
+            and target.type == "identifier"
+            and value is not None
+            and value.type == "number_literal"
+            and self.b.raw(value) == "0"
+        ):
+            return self.b.raw(target)
+        return None
+
+    def direct_body(self, statements: list[Any], index: str, count: str) -> str | None:
+        if not statements:
+            return None
+        node = statements[0]
+        if node.type == "if_statement" and len(statements) == 1:
+            condition = self.condition(node)
+            target = self.failed_read(condition, "") if condition is not None else None
+            array = self.array(target, index)
+            return array if array and self.error_exit(node, {count}) else None
+        if node.type != "expression_statement":
+            return None
+        array = self.array(self.read(self.b._expr(node), ""), index)
+        if not array:
+            return None
+        if len(statements) == 1:
+            return array
+        if len(statements) == 2:
+            check = statements[1]
+            condition = self.condition(check) if check.type == "if_statement" else None
+            if (
+                condition is not None
+                and all(self.cin_failed(atom) for atom in self.atoms(condition))
+                and self.error_exit(check, {count})
+            ):
+                return array
+        return None
+
+    def direct_array(self, start: int) -> InputGroup | None:
+        node = self.nodes[start]
+        scoped = False
+        if node.type == "for_statement":
+            initializer = node.child_by_field_name("initializer")
+            index = self.local_index(initializer)
+            scoped = index is not None
+            index = index or (
+                self.zero_assignment(initializer) if initializer is not None else None
+            )
+            if not index:
                 return None
-        return (name, extra) if self.error_exit(node, {name}) else None
+            count = self.bound(node.child_by_field_name("condition"), index)
+            update = node.child_by_field_name("update")
+            statements = self.b._statements(node.child_by_field_name("body"))
+            if not count or update is None or not self.increment(update, index):
+                return None
+            array = self.direct_body(statements, index, count)
+            end = start + 1
+        else:
+            index = self.zero_assignment(node) or self.local_index(node)
+            if not index or start + 1 >= len(self.nodes):
+                return None
+            loop = self.nodes[start + 1]
+            if loop.type != "while_statement":
+                return None
+            condition = self.condition(loop)
+            if condition is None:
+                return None
+            statements = self.b._statements(loop.child_by_field_name("body"))
+            if not statements or not self.increment(statements[-1], index):
+                return None
+            if self.b.op_of(condition) == "&&":
+                left, right = self.b.sides(condition)
+                count = self.bound(left, index)
+                array = self.array(self.read(right, ""), index)
+                end = start + 3
+                if (
+                    not count
+                    or not array
+                    or len(statements) != 1
+                    or end > len(self.nodes)
+                ):
+                    return None
+                check = self.nodes[end - 1]
+                tail = self.condition(check) if check.type == "if_statement" else None
+                atoms = self.atoms(tail) if tail is not None else []
+                mismatch = False
+                for atom in atoms:
+                    left, right = self.b.sides(atom)
+                    if (
+                        self.b.op_of(atom) == "!="
+                        and self.b.raw(left) == index
+                        and self.b.raw(right) == count
+                    ):
+                        mismatch = True
+                    elif not self.cin_failed(atom):
+                        return None
+                if not mismatch or not self.error_exit(check, {count}):
+                    return None
+            else:
+                count = self.bound(condition, index)
+                array = (
+                    self.direct_body(statements[:-1], index, count) if count else None
+                )
+                end = start + 2
+        if not array or (not scoped and not self.index_disposable(index, end)):
+            return None
+        return InputGroup(end, f"Ввод {array}[{count}]", index=index)
+
+    def direct(self, position: int) -> InputGroup | None:
+        node = self.nodes[position]
+        if node.type == "if_statement":
+            scalar = self.scalar_check(node, "")
+            if scalar is None:
+                return None
+            names = [scalar[0]]
+        elif node.type == "expression_statement":
+            stream = self.b._stream_parts(self.b._expr(node))
+            if (
+                stream is None
+                or stream[0] != M.INPUT
+                or not stream[1]
+                or not all(self.scalar(target) for target in stream[1])
+            ):
+                return self.direct_array(position)
+            names = [self.b.raw(target) for target in stream[1]]
+        else:
+            return self.direct_array(position)
+        end = position + 1
+        while end < len(self.nodes) and self.direct_validation(
+            self.nodes[end], set(names)
+        ):
+            end += 1
+        return InputGroup(end, "Ввод " + ", ".join(names))
 
     def zero_assignment(self, node: Any) -> str | None:
         node = self.b._expr(node)
@@ -273,11 +497,20 @@ class _Recognizer:
         return extra if extra and self.error_exit(node, {count}) else None
 
     def index_disposable(self, index: str, end: int) -> bool:
+        if index not in self.declarations:
+            return False
+        if any(position < end for position in self.index_escapes.get(index, set())):
+            return False
         # Первое следующее использование должно заново задать индекс.
         for position in sorted(self.references.get(index, set())):
             if position < end:
                 continue
             node = self.nodes[position]
+            if (
+                node.type == "for_statement"
+                and self.local_index(node.child_by_field_name("initializer")) == index
+            ):
+                continue
             initializer = (
                 node.child_by_field_name("initializer")
                 if node.type == "for_statement"
@@ -469,7 +702,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
                 return plan
     candidates = {}
     for position in range(len(nodes)):
-        group = recognizer.candidate(position)
+        group = recognizer.candidate(position) or recognizer.direct(position)
         if group is None:
             continue
         if any(
@@ -479,7 +712,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             if child.type in {"identifier", "type_identifier"}
         ):
             continue
-        if recognizer.references.get(group.stream, set()) - set(
+        if group.stream and recognizer.references.get(group.stream, set()) - set(
             range(position, group.end)
         ):
             continue
@@ -499,6 +732,8 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         invalid = set()
         for start, group in candidates.items():
             for name in (group.buffer, group.scratch):
+                if not name:
+                    continue
                 declaration = recognizer.declarations.get(name)
                 allowed = covered | (
                     {declaration[0]} if declaration is not None else set()
@@ -511,5 +746,9 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             start: group for start, group in candidates.items() if start not in invalid
         }
     plan.groups = candidates
-    plan.hidden = {recognizer.buffers[group.buffer] for group in candidates.values()}
+    plan.hidden = {
+        recognizer.buffers[group.buffer]
+        for group in candidates.values()
+        if group.buffer
+    }
     return plan

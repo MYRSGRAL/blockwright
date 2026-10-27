@@ -61,13 +61,47 @@ int main() {
     return 0;
 }"""
 
+DIRECT_CODE = r"""#include <iostream>
+using namespace std;
+int main() {
+    setlocale(LC_ALL, "Russian");
+    int a[100];
+    int n;
+    cout << "Введите количество элементов от 1 до 100: ";
+    if (!(cin >> n) || n < 1 || n > 100) {
+        cout << "Ошибка ввода";
+        return 1;
+    }
+    cout << "Введите элементы массива: ";
+    for (int i = 0; i < n; i++) {
+        if (!(cin >> a[i])) {
+            cout << "Ошибка ввода";
+            return 1;
+        }
+    }
+    int k = 0;
+    for (int i = 0; i < n; i++) {
+        if (a[i] % 2 != 0) {
+            a[k] = a[i];
+            k++;
+        }
+    }
+    n = k;
+    cout << "Массив после удаления: ";
+    if (n == 0) { cout << "пустой"; }
+    else { for (int i = 0; i < n; i++) { cout << a[i] << ' '; } }
+    cout << '\n';
+    return 0;
+}"""
+
 
 def build(code: str, *, checks: str = "hide", study: bool = True) -> M.Seq:
     src = code.encode()
     tree, spec, errors = P.parse_source(src, P.guess_language("input.cpp", code))
     source = project.Source("input.cpp", src, spec, tree, errors)
     known = P.collect_known_names(src, tree.root_node, spec)
-    return project.charts(source, Opts(study=study, checks=checks), known)[0].body
+    charts = project.charts(source, Opts(study=study, checks=checks), known)
+    return next(chart.body for chart in charts if chart.info["main"])
 
 
 def walk(item: object) -> Iterator[object]:
@@ -84,6 +118,179 @@ def walk(item: object) -> Iterator[object]:
 
 
 class InputGroups(unittest.TestCase):
+    def test_global_index_observed_by_function_keeps_direct_loop(self) -> None:
+        body = build(
+            "int i; void observe_global(){cout<<i;} "
+            "int main(){int a[10];int n=10;for(i=0;i<n;i++){cin>>a[i];}"
+            "observe_global();return 0;}"
+        )
+        self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertTrue(any(isinstance(item, M.ForLoop) for item in walk(body)))
+
+    def test_global_index_observed_by_function_keeps_buffered_loop(self) -> None:
+        code = "int i; void observe_global(){cout<<i;}\n" + USER_CODE.replace(
+            "int n, i;", "int n;"
+        )
+        marker = "    for (i = 0; i < n; i++) {\n        if (a[i] % 2"
+        code = code.replace(marker, "    observe_global();\n" + marker)
+        body = build(code)
+        self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertTrue(
+            any(
+                isinstance(item, M.If) and "arrayInput >> a[i]" in item.cond
+                for item in walk(body)
+            )
+        )
+
+    def test_scoped_index_can_shadow_global_without_changing_it(self) -> None:
+        body = build(
+            "int i; void observe_global(){cout<<i;} "
+            "int main(){int a[10];int n=10;for(int i=0;i<n;i++){cin>>a[i];}"
+            "observe_global();return 0;}"
+        )
+        self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+
+    def test_direct_user_example_keeps_one_algorithmic_loop(self) -> None:
+        body = build(DIRECT_CODE)
+        inputs = [
+            item.text
+            for item in walk(body)
+            if isinstance(item, M.Simple) and item.kind == M.INPUT
+        ]
+        self.assertEqual(inputs, ["Ввод n", "Ввод a[n]"])
+        self.assertEqual(
+            sum(isinstance(item, (M.ForLoop, M.While)) for item in walk(body)), 1
+        )
+        self.assertTrue(
+            any(
+                isinstance(item, M.If) and item.cond == "a[i] % 2 != 0"
+                for item in walk(body)
+            )
+        )
+        texts = [item.text for item in walk(body) if isinstance(item, M.Simple)]
+        self.assertFalse(
+            any(
+                "Ошибка" in text or "Введите" in text or text in {"Вывод", "Вывод "}
+                for text in texts
+            )
+        )
+        self.assertIn("n = k", texts)
+
+    def test_direct_standalone_reads_and_adjacent_checks(self) -> None:
+        for validation in (
+            "!cin || n<1 || n>100",
+            "cin.fail() || n<1 || n>100",
+            "n<1 || n>100",
+        ):
+            with self.subTest(validation=validation):
+                body = build(
+                    'int main(){int n; cout<<"Введите число:"; cin>>n; if('
+                    + validation
+                    + '){cout<<"Неверное число";return 1;} use(n);return 0;}'
+                )
+                self.assertEqual(body.items[0], M.Simple(M.INPUT, "Ввод n"))
+                self.assertFalse(any(isinstance(item, M.If) for item in walk(body)))
+                self.assertIn(M.Simple(M.PROCESS, "use(n)"), body.items)
+
+    def test_direct_indexed_for_and_while_variants(self) -> None:
+        loops = [
+            'for(int i=0;i<n;i++){cin>>a[i];if(cin.fail()){cout<<"Ошибка";return 1;}}',
+            "for(int i=0;i<n;i++){cin>>a[i];}",
+            'i=0;while(i<n){if(!(cin>>a[i])){cout<<"Ошибка";return 1;}i++;}',
+            'i=0;while(i<n && (cin>>a[i])){i++;}if(i!=n){cout<<"Ошибка";return 1;}',
+        ]
+        for loop in loops:
+            with self.subTest(loop=loop):
+                body = build(
+                    "int main(){int n=10;int a[10];int i;" + loop + "return 0;}"
+                )
+                self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+                self.assertFalse(
+                    any(isinstance(item, (M.ForLoop, M.While)) for item in walk(body))
+                )
+
+    def test_direct_checks_remain_visible_in_show_and_full(self) -> None:
+        for opts in ({"checks": "show"}, {"study": False}):
+            with self.subTest(opts=opts):
+                body = build(DIRECT_CODE, **opts)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "cin >> n" in item.cond
+                        for item in walk(body)
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "cin >> a[i]" in item.cond
+                        for item in walk(body)
+                    )
+                )
+
+    def test_direct_validation_effects_and_unknown_types_remain_visible(self) -> None:
+        cases = [
+            DIRECT_CODE.replace(
+                'cout << "Ошибка ввода";', 'cout << "Ошибка ввода" << ++counter;'
+            ),
+            DIRECT_CODE.replace(
+                'cout << "Ошибка ввода";', 'cout << "Ошибка ввода" << report();'
+            ),
+            DIRECT_CODE.replace("return 1;", "record();return 1;"),
+            DIRECT_CODE.replace("int a[100];", "Array a;"),
+            DIRECT_CODE.replace("int n;", "Number n;"),
+            "#define cin custom_stream\n" + DIRECT_CODE,
+        ]
+        for code in cases:
+            with self.subTest(code=code):
+                body = build(code)
+                self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.ForLoop)
+                        and any(
+                            isinstance(child, M.If) and "cin >> a[i]" in child.cond
+                            for child in walk(item.body)
+                        )
+                        for item in walk(body)
+                    )
+                )
+
+    def test_direct_external_index_is_not_removed_when_live(self) -> None:
+        body = build(
+            'int main(){int n=10;int a[10];int i;for(i=0;i<n;i++){if(!(cin>>a[i])){cout<<"Ошибка";return 1;}}observe(i);return 0;}'
+        )
+        self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertIn(M.Simple(M.PROCESS, "observe(i)"), body.items)
+
+    def test_direct_index_observed_through_alias_keeps_loop(self) -> None:
+        for declaration, expression in (
+            ("int* saved=&i;", "*saved"),
+            ("int& saved=i;", "saved"),
+            ("auto saved=[&i](){return i;};", "saved()"),
+            ("auto saved=[&](){return i;};", "saved()"),
+        ):
+            with self.subTest(declaration=declaration):
+                body = build(
+                    "int main(){int n=10;int a[10];int i;"
+                    + declaration
+                    + "for(i=0;i<n;i++){cin>>a[i];}observe("
+                    + expression
+                    + ");return 0;}"
+                )
+                self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+
+    def test_scoped_later_loop_does_not_overwrite_external_index(self) -> None:
+        body = build(
+            "int main(){int n=10;int a[10];int i;for(i=0;i<n;i++){cin>>a[i];}for(int i=0;i<n;i++){work(i);}observe(i);return 0;}"
+        )
+        self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+
+    def test_direct_local_index_does_not_modify_outer_index(self) -> None:
+        body = build(
+            'int main(){int n=10;int a[10];int i=7;for(int i=0;i<n;i++){if(!(cin>>a[i])){cout<<"Ошибка";return 1;}}observe(i);return 0;}'
+        )
+        self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertIn(M.Simple(M.PROCESS, "observe(i)"), body.items)
+
     def test_array_count_must_be_integer_even_when_global_name_is_integer(self) -> None:
         for prefix in ("", "int n;\n"):
             code = prefix + USER_CODE.replace("int n, i;", "double n; int i;")

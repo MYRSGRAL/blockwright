@@ -537,7 +537,14 @@ class StudyBuilder(Builder):
             if (
                 stream
                 and stream[0] == M.OUTPUT
-                and all(self._display_manipulator(p) for p in stream[1])
+                and all(
+                    self._display_manipulator(p)
+                    or (
+                        (literal := self._string_value(p)) is not None
+                        and not literal.strip()
+                    )
+                    for p in stream[1]
+                )
             ):
                 return []
         return super().k_expression(n, r)

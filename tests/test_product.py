@@ -13,6 +13,20 @@ from blockwright.cli import Opts, build_parser, main
 
 
 class Product(unittest.TestCase):
+    def test_direct_array_input_is_compact_in_generated_svg(self) -> None:
+        from tests.test_input_study import DIRECT_CODE
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "array.cpp"
+            source.write_text(DIRECT_CODE, encoding="utf-8")
+            out = Path(tmp) / "out"
+            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", str(out)]), 0)
+            svg = (out / "array__main.svg").read_text(encoding="utf-8")
+            for label in ("Ввод n", "Ввод a[n]", "Вывод a[n]", "a[k] = a[i]", "n = k"):
+                self.assertIn(label, svg)
+            for label in ("Введите", "Ошибка", "cin &gt;&gt;"):
+                self.assertNotIn(label, svg)
+
     def test_checks_flag_controls_lab2_error_branches(self) -> None:
         source = Path(__file__).parent / "fixtures/study/lab2.cpp"
         with tempfile.TemporaryDirectory() as tmp:
