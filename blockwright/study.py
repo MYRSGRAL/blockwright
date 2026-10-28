@@ -33,6 +33,7 @@ class StudyBuilder(Builder):
 
     def build_body(self, body: Any, is_main: bool = False) -> M.Seq:
         self._shadowed = set()
+        self._type_names = set()
         self._macro_names = set()
         nodes = list(body) if isinstance(body, list) else [body]
         if not isinstance(body, list):
@@ -62,6 +63,7 @@ class StudyBuilder(Builder):
                     )
                     if name is not None:
                         self._shadowed.add(self.raw(name))
+                        self._type_names.add(self.raw(name))
                 macro_nodes.extend(node.named_children)
             global_nodes = [root]
             while global_nodes:
@@ -152,6 +154,12 @@ class StudyBuilder(Builder):
                         )
                         else "integer"
                     )
+                elif (
+                    target.type == "identifier"
+                    and self._name(typ, "string")
+                    and not any(self.raw(c) == "volatile" for c in node.named_children)
+                ):
+                    category = "string"
                 elif primitive and target.type == "array_declarator":
                     element = target
                     rank = 0
@@ -169,6 +177,11 @@ class StudyBuilder(Builder):
         self._integer_names = {
             name for name, kinds in categories.items() if kinds == {"integer"}
         } - self._macro_names
+        self._string_names = (
+            {name for name, kinds in categories.items() if kinds == {"string"}}
+            - self._macro_names
+            - self._type_names
+        )
         self._array_names = {
             name
             for name, kinds in categories.items()
@@ -289,6 +302,8 @@ class StudyBuilder(Builder):
         typ = node.child_by_field_name("type")
         if self.raw(typ) in self._macro_names:
             return None
+        if self._name(typ, "istringstream"):
+            return self._string_stream_declaration(node)
         if typ is None or not (
             typ.type in {"primitive_type", "sized_type_specifier"}
             or self._name(typ, "string")
@@ -332,11 +347,67 @@ class StudyBuilder(Builder):
             texts.append(f"{self.t(target)} = {self.t(value)}")
         return [M.Simple(M.PROCESS, text) for text in texts]
 
+    def _string_stream_declaration(self, node: Any) -> list[object] | None:
+        if any(
+            self.raw(c) in {"volatile", "static", "thread_local", "extern"}
+            for c in node.named_children
+        ):
+            return None
+        declarations = node.children_by_field_name("declarator")
+        if len(declarations) != 1:
+            return None
+        declarator = declarations[0]
+        name = declarator.child_by_field_name("declarator")
+        if declarator.type == "function_declarator":
+            parameters = declarator.child_by_field_name("parameters")
+        elif declarator.type == "init_declarator":
+            parameters = declarator.child_by_field_name("value")
+            if parameters is None or parameters.type != "initializer_list":
+                return None
+        else:
+            return None
+        if name is None or name.type != "identifier" or parameters is None:
+            return None
+        args = self.named(parameters)
+        if len(args) != 1:
+            return None
+        source = self.raw(args[0])
+        if source not in self._string_names or self.raw(name) in self._macro_names:
+            return None
+        return [M.Simple(M.PROCESS, f"{self.t(name)} = {source}")]
+
     def k_simple(self, n: Any, r: dict) -> list[object]:
         declarations = self._declaration(n)
         return declarations if declarations is not None else super().k_simple(n, r)
 
+    def _literal_value(self, value: Any) -> bool:
+        value = self._unwrap(value)
+        if value is None:
+            return False
+        if value.type == "unary_expression" and self.op_of(value) in {"+", "-"}:
+            argument = self._unwrap(value.child_by_field_name("argument"))
+            return argument is not None and argument.type == "number_literal"
+        return value.type in {"number_literal", "char_literal", "true", "false"}
+
     def _literal_initializations(self, node: Any) -> list[str] | None:
+        if node.type == "expression_statement":
+            expression = self._unwrap(self._expr(node))
+            if (
+                expression is None
+                or expression.type != "assignment_expression"
+                or self.op_of(expression) != "="
+            ):
+                return None
+            target, value = self.sides(expression)
+            if (
+                target is None
+                or target.type != "identifier"
+                or self.raw(target) not in self._scalar_names
+                or not self._literal_value(value)
+            ):
+                return None
+            text = f"{self.t(target)} = {self.t(value)}"
+            return [text] if len(text) <= _MAX_INITIALIZATION_TEXT else None
         if node.type != "declaration":
             return None
         statements = self._declaration(node)
@@ -346,21 +417,7 @@ class StudyBuilder(Builder):
         if len(declarations) != len(statements):
             return None
         for declaration in declarations:
-            value = self._unwrap(declaration.child_by_field_name("value"))
-            if (
-                value is not None
-                and value.type == "unary_expression"
-                and self.op_of(value) in {"+", "-"}
-            ):
-                value = self._unwrap(value.child_by_field_name("argument"))
-                if value is None or value.type != "number_literal":
-                    return None
-            elif value is None or value.type not in {
-                "number_literal",
-                "char_literal",
-                "true",
-                "false",
-            }:
+            if not self._literal_value(declaration.child_by_field_name("value")):
                 return None
         texts = [statement.text for statement in statements]
         return texts if len("; ".join(texts)) <= _MAX_INITIALIZATION_TEXT else None
@@ -964,6 +1021,11 @@ class StudyBuilder(Builder):
             if initializations:
                 next_index = index + 1
                 while next_index < len(nodes):
+                    if (
+                        next_index in input_plan.groups
+                        or next_index in input_plan.hidden
+                    ):
+                        break
                     following = self._literal_initializations(nodes[next_index])
                     if (
                         not following

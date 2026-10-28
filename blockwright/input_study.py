@@ -42,6 +42,7 @@ class _Recognizer:
         self.buffers: dict[str, int] = {}
         self.streams: dict[str, int] = {}
         self.index_escapes: dict[str, set[int]] = {}
+        self.text_groups: dict[int, tuple[str, int]] = {}
         for position, node in enumerate(nodes):
             for child in self.walk(node):
                 if child.type in {"identifier", "type_identifier"}:
@@ -86,13 +87,17 @@ class _Recognizer:
                 if target is not None:
                     self.declarations[builder.raw(target)] = position, node
             target = node.child_by_field_name("declarator")
+            declarators = node.children_by_field_name("declarator")
             if (
-                target is not None
-                and target.type == "identifier"
-                and len(node.children_by_field_name("declarator")) == 1
+                declarators
+                and all(part.type == "identifier" for part in declarators)
                 and builder._name(node.child_by_field_name("type"), "string")
+                and all(
+                    builder.raw(part) in builder._string_names for part in declarators
+                )
             ):
-                self.buffers[builder.raw(target)] = position
+                for part in declarators:
+                    self.buffers[builder.raw(part)] = position
             if (
                 target is not None
                 and target.type == "identifier"
@@ -236,7 +241,9 @@ class _Recognizer:
             return None
         return name
 
-    def error_exit(self, node: Any, allowed: set[str]) -> bool:
+    def error_exit(
+        self, node: Any, allowed: set[str], *, numeric_exit: bool = False
+    ) -> bool:
         if (
             node.type != "if_statement"
             or node.child_by_field_name("alternative") is not None
@@ -250,7 +257,15 @@ class _Recognizer:
         ):
             return False
         value = next(iter(statements[1].named_children), None)
-        if value is None or value.type != "number_literal" or self.b.raw(value) != "1":
+        if value is None or value.type != "number_literal":
+            return False
+        if numeric_exit:
+            try:
+                if int(self.b.raw(value), 0) == 0:
+                    return False
+            except ValueError:
+                return False
+        elif self.b.raw(value) != "1":
             return False
         stream = self.b._stream_parts(self.b._expr(statements[0]))
         if stream is None or stream[0] != M.OUTPUT:
@@ -264,6 +279,333 @@ class _Recognizer:
             elif not self.scalar(part) or self.b.raw(part) not in allowed:
                 return False
         return literal
+
+    def macro_free(self, node: Any) -> bool:
+        return not any(
+            child.type in {"identifier", "type_identifier", "field_identifier"}
+            and self.b.raw(child) in self.b._macro_names
+            for child in self.walk(node)
+        )
+
+    def string_name(self, name: str) -> bool:
+        return name in self.b._string_names and name in self.declarations
+
+    def getline_target(self, node: Any) -> str | None:
+        node = self.b._unwrap(self.b._expr(node))
+        if node.type != "call_expression" or not self.b._name(
+            node.child_by_field_name("function"), "getline"
+        ):
+            return None
+        args = self.b.call_args(node)
+        if (
+            len(args) not in {2, 3}
+            or not self.b._name(args[0], "cin")
+            or args[1].type != "identifier"
+            or (len(args) == 3 and args[2].type != "char_literal")
+        ):
+            return None
+        name = self.b.raw(args[1])
+        return (
+            name
+            if self.string_name(name)
+            and self.declarations[name][1].end_byte < node.start_byte
+            else None
+        )
+
+    def constant_bound(self, node: Any) -> bool:
+        node = self.b._unwrap(node)
+        if node is None:
+            return False
+        if node.type == "number_literal":
+            return True
+        if node.type == "unary_expression" and self.b.op_of(node) in {"+", "-"}:
+            value = self.b._unwrap(node.child_by_field_name("argument"))
+            return value is not None and value.type == "number_literal"
+        if not self.scalar(node):
+            return False
+        declaration = self.declarations.get(self.b.raw(node))
+        if declaration is None or not any(
+            self.b.raw(child) in {"const", "constexpr"}
+            for child in declaration[1].named_children
+        ):
+            return False
+        for declarator in declaration[1].children_by_field_name("declarator"):
+            if self.b.raw(declarator.child_by_field_name("declarator")) == self.b.raw(
+                node
+            ):
+                value = declarator.child_by_field_name("value")
+                return value is not None and value.type == "number_literal"
+        return False
+
+    def string_measure(self, node: Any, methods: set[str]) -> str | None:
+        node = self.b._unwrap(node)
+        if node is None or node.type != "call_expression":
+            return None
+        function = node.child_by_field_name("function")
+        if function is None or function.type != "field_expression":
+            return None
+        owner = function.child_by_field_name("argument")
+        method = self.b.raw(function.child_by_field_name("field"))
+        name = self.b.raw(owner)
+        return (
+            name
+            if owner is not None
+            and owner.type == "identifier"
+            and self.string_name(name)
+            and method in methods
+            and self.member(node, name, method) == []
+            else None
+        )
+
+    def string_validation(self, node: Any) -> str | None:
+        names = set()
+        for atom in self.atoms(node):
+            name = self.string_measure(atom, {"empty"})
+            if name:
+                names.add(name)
+                continue
+            left, right = self.b.sides(atom)
+            if self.b.op_of(atom) not in {"<", "<=", ">", ">=", "==", "!="}:
+                return None
+            name = self.string_measure(left, {"size", "length"})
+            if name and self.constant_bound(right):
+                names.add(name)
+                continue
+            name = self.string_measure(right, {"size", "length"})
+            if not name or not self.constant_bound(left):
+                return None
+            names.add(name)
+        return next(iter(names)) if len(names) == 1 else None
+
+    def text_candidate(self, position: int) -> InputGroup | None:
+        node = self.nodes[position]
+        if node.type == "if_statement":
+            condition = self.condition(node)
+            atoms = self.atoms(condition) if condition is not None else []
+            read = self.negated(atoms[0]) if atoms else None
+            name = self.getline_target(read) if read is not None else None
+            if (
+                not name
+                or any(self.string_validation(atom) != name for atom in atoms[1:])
+                or not self.error_exit(node, self.b._scalar_names, numeric_exit=True)
+            ):
+                return None
+        elif node.type == "expression_statement":
+            name = self.getline_target(node)
+            if not name:
+                return None
+        else:
+            return None
+        group = InputGroup(position + 1, "Ввод " + name)
+        self.text_groups[id(group)] = name, position
+        return group
+
+    def stream_source(self, node: Any) -> tuple[str, str] | None:
+        if (
+            node.type != "declaration"
+            or len(node.children_by_field_name("declarator")) != 1
+            or not self.b._name(node.child_by_field_name("type"), "istringstream")
+            or not self.macro_free(node)
+        ):
+            return None
+        declarator = node.child_by_field_name("declarator")
+        name = declarator.child_by_field_name("declarator")
+        params = declarator.child_by_field_name("parameters")
+        if (
+            declarator.type != "function_declarator"
+            or name is None
+            or name.type != "identifier"
+            or params is None
+        ):
+            return None
+        for text in self.b._string_names:
+            if (
+                self.string_name(text)
+                and "".join(self.b.raw(params).split()) == f"({text})"
+            ):
+                return self.b.raw(name), text
+        return None
+
+    def text_unchanged(
+        self, name: str, read: int, end: int, reads: dict[str, list[int]]
+    ) -> bool:
+        allowed_reads = set(reads.get(name, []))
+        if any(
+            position < end and position not in allowed_reads
+            for position in self.index_escapes.get(name, set())
+        ):
+            return False
+        for position in self.references.get(name, set()):
+            if not read < position < end:
+                continue
+            node = self.nodes[position]
+            source = self.stream_source(node)
+            if source is not None and source[1] == name:
+                continue
+            if not self.macro_free(node):
+                return False
+            for child in self.walk(node):
+                if child.type != "identifier" or self.b.raw(child) != name:
+                    continue
+                field = child.parent
+                call = field.parent if field is not None else None
+                if (
+                    field is None
+                    or field.type != "field_expression"
+                    or field.child_by_field_name("argument") != child
+                    or self.string_measure(call, {"empty", "size", "length"}) != name
+                ):
+                    return False
+        return True
+
+    def initialized_zero(self, name: str) -> int | None:
+        declaration = self.declarations.get(name)
+        if (
+            declaration is None
+            or name not in self.b._integer_names
+            or any(
+                self.b.raw(child) in {"static", "extern", "thread_local", "volatile"}
+                for child in declaration[1].named_children
+            )
+        ):
+            return None
+        for declarator in declaration[1].children_by_field_name("declarator"):
+            if self.b.raw(declarator.child_by_field_name("declarator")) == name:
+                value = declarator.child_by_field_name("value")
+                return (
+                    declaration[0]
+                    if value is not None
+                    and value.type == "number_literal"
+                    and self.b.raw(value) == "0"
+                    else None
+                )
+        return None
+
+    def writes(self, node: Any, name: str) -> Iterator[Any]:
+        for child in self.walk(node):
+            target = None
+            if child.type == "assignment_expression":
+                target = child.child_by_field_name("left")
+            elif child.type == "update_expression":
+                target = child.child_by_field_name("argument")
+            elif child.type == "init_declarator":
+                target = child.child_by_field_name("declarator")
+            if (
+                target is not None
+                and target.type == "identifier"
+                and self.b.raw(target) == name
+            ):
+                yield child
+
+    def word_count_guard(
+        self, condition: Any, end: int, reads: dict[str, list[int]]
+    ) -> bool:
+        if self.b.op_of(condition) != "==":
+            return False
+        left, right = self.b.sides(condition)
+        if (
+            left is not None
+            and left.type == "number_literal"
+            and self.b.raw(left) == "0"
+        ):
+            left, right = right, left
+        if (
+            not self.scalar(left)
+            or right is None
+            or right.type != "number_literal"
+            or self.b.raw(right) != "0"
+        ):
+            return False
+        counter = self.b.raw(left)
+        initialized = self.initialized_zero(counter)
+        if initialized is None or any(
+            position < end for position in self.index_escapes.get(counter, set())
+        ):
+            return False
+        for position in range(initialized + 1, end):
+            loop = self.nodes[position]
+            if loop.type != "while_statement" or not self.macro_free(loop):
+                continue
+            condition = self.condition(loop)
+            if condition is None or self.b.op_of(condition) != ">>":
+                continue
+            stream, word = self.b.sides(condition)
+            if (
+                stream is None
+                or stream.type != "identifier"
+                or word is None
+                or word.type != "identifier"
+                or not self.string_name(self.b.raw(word))
+            ):
+                continue
+            binding = self.declarations.get(self.b.raw(stream))
+            source = self.stream_source(binding[1]) if binding is not None else None
+            if (
+                source is None
+                or binding[0] >= position
+                or self.b.raw(word) == source[1]
+                or self.declarations[self.b.raw(word)][0] >= position
+            ):
+                continue
+            origins = [read for read in reads.get(source[1], []) if read < binding[0]]
+            if not origins or not self.text_unchanged(
+                source[1], max(origins), end, reads
+            ):
+                continue
+            if any(
+                binding[0] < use < end and use != position
+                for use in self.references.get(source[0], set())
+            ):
+                continue
+            body = self.b._statements(loop.child_by_field_name("body"))
+            if (
+                not body
+                or not self.increment(body[0], counter)
+                or self.references_name(loop.child_by_field_name("body"), source[0])
+            ):
+                continue
+            increment = self.b._expr(body[0])
+            mutations = [
+                write
+                for node in self.nodes[initialized + 1 : end]
+                for write in self.writes(node, counter)
+            ]
+            if len(mutations) == 1 and mutations[0] == increment:
+                return True
+        return False
+
+    def hidden_text_guards(self, groups: dict[int, InputGroup]) -> set[int]:
+        reads: dict[str, list[int]] = {}
+        for group in groups.values():
+            source = self.text_groups.get(id(group))
+            if source is not None:
+                name, position = source
+                reads.setdefault(name, []).append(position)
+        hidden = set()
+        if not reads:
+            return hidden
+        for position, node in enumerate(self.nodes):
+            if (
+                node.type != "if_statement"
+                or not self.macro_free(node)
+                or not self.error_exit(node, self.b._scalar_names, numeric_exit=True)
+            ):
+                continue
+            condition = self.condition(node)
+            if condition is None:
+                continue
+            name = self.string_validation(condition)
+            if name:
+                origins = [read for read in reads.get(name, []) if read < position]
+                if origins and self.text_unchanged(name, max(origins), position, reads):
+                    hidden.add(position)
+            elif (
+                self.cin_failed(condition)
+                and any(position - 1 in positions for positions in reads.values())
+                or self.word_count_guard(condition, position, reads)
+            ):
+                hidden.add(position)
+        return hidden
 
     def scalar_check(self, node: Any, stream: str) -> tuple[list[str], str] | None:
         condition = self.condition(node)
@@ -874,6 +1216,21 @@ class _Recognizer:
                     return InputGroup(
                         end + 1, "Ввод " + ", ".join(targets), buffer, stream, scratch
                     )
+            if end + 1 < len(self.nodes):
+                rank = self.rank_loop(self.nodes[end], [], [], stream)
+                if rank is not None and not rank.buffer:
+                    scratch = self.tail(self.nodes[end + 1], stream, rank.bounds[-1])
+                    finish = end + 2
+                    if scratch and all(
+                        local or self.index_disposable(index, finish)
+                        for index, local in rank.indices
+                    ):
+                        target = rank.array + "".join(
+                            f"[{bound}]" for bound in rank.bounds
+                        )
+                        return InputGroup(
+                            finish, "Ввод " + target, buffer, stream, scratch
+                        )
         if position + 2 >= len(self.nodes):
             return None
         call = self.b._expr(self.nodes[position])
@@ -993,6 +1350,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             recognizer.candidate(position)
             or recognizer.ranked_candidate(position)
             or recognizer.direct(position)
+            or recognizer.text_candidate(position)
         )
         if group is None:
             continue
@@ -1043,4 +1401,5 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         for group in candidates.values()
         if group.stream in recognizer.streams
     )
+    plan.hidden.update(recognizer.hidden_text_guards(candidates))
     return plan

@@ -566,5 +566,232 @@ class MatrixInputGroups(unittest.TestCase):
                 )
 
 
+class BufferedLocalIndex(unittest.TestCase):
+    @staticmethod
+    def source() -> str:
+        return (Path(__file__).parent / "fixtures/study/pairs_while.cpp").read_text(
+            encoding="utf-8"
+        )
+
+    def test_shared_buffer_declaration_and_local_read_counter(self) -> None:
+        body = build(self.source())
+        inputs = [
+            item.text
+            for item in walk(body)
+            if isinstance(item, M.Simple) and item.kind == M.INPUT
+        ]
+        self.assertEqual(inputs, ["Ввод n", "Ввод a[n]"])
+        self.assertEqual(
+            [item.cond for item in walk(body) if isinstance(item, M.While)],
+            ["i < n - 1"],
+        )
+        self.assertEqual(
+            [item.cond for item in walk(body) if isinstance(item, M.If)],
+            ["a[i] < a[j]", "j == n"],
+        )
+        self.assertFalse(any(isinstance(item, M.ForLoop) for item in walk(body)))
+        self.assertIn(M.Simple(M.OUTPUT, "Вывод count"), body.items)
+
+    def test_separate_buffers_and_renamed_local_index_are_equivalent(self) -> None:
+        for buffers in ("string line, elements;", "string line;string elements;"):
+            code = self.source().replace("string line, elements;", buffers)
+            code = code.replace(
+                "int k = 0; k < n; k++", "int position = 0; position < n; position++"
+            ).replace("a[k]", "a[position]")
+            body = build(code)
+            self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+
+    def test_effectful_error_and_mixed_declaration_are_preserved(self) -> None:
+        for code in (
+            self.source().replace("return 1;", "audit();return 1;"),
+            self.source().replace(
+                "string line, elements;", "string line, elements, keep = make_label();"
+            ),
+        ):
+            with self.subTest(code=code):
+                body = build(code)
+                self.assertTrue(any(isinstance(item, M.ForLoop) for item in walk(body)))
+                if "make_label" in code:
+                    self.assertTrue(
+                        any(
+                            isinstance(item, M.Simple) and "make_label()" in item.text
+                            for item in walk(body)
+                        )
+                    )
+
+    def test_show_and_full_keep_buffered_checks(self) -> None:
+        for opts in ({"checks": "show"}, {"study": False}):
+            with self.subTest(opts=opts):
+                body = build(self.source(), **opts)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "input >> a[k]" in item.cond
+                        for item in walk(body)
+                    )
+                )
+
+
+class TextInputGroups(unittest.TestCase):
+    @staticmethod
+    def source() -> str:
+        return (Path(__file__).parent / "fixtures/study/longest_word.cpp").read_text(
+            encoding="utf-8"
+        )
+
+    def test_text_input_hides_guards_and_preserves_word_algorithm(self) -> None:
+        body = build(self.source())
+        self.assertIn(M.Simple(M.INPUT, "Ввод text"), body.items)
+        self.assertFalse(any(isinstance(item, M.If) for item in body.items))
+        loops = [item for item in body.items if isinstance(item, M.While)]
+        self.assertEqual(len(loops), 1)
+        self.assertEqual(loops[0].cond, "iss >> word")
+        self.assertTrue(
+            any(
+                isinstance(item, M.If)
+                and item.cond == "word.size() > longestWord.size()"
+                for item in walk(body)
+            )
+        )
+        texts = [item.text for item in walk(body) if isinstance(item, M.Simple)]
+        for text in (
+            "number = number + 1",
+            "longestWord = word",
+            "maxNumber = number",
+            "Вывод longestWord, maxNumber",
+        ):
+            self.assertIn(text, texts)
+        self.assertTrue(any("iss = text" in text for text in texts))
+        self.assertFalse(any("Ошибка" in text or "Введите" in text for text in texts))
+
+    def test_other_names_bounds_exit_codes_and_standalone_getline(self) -> None:
+        code = self.source()
+        for name, replacement in (
+            ("text", "sentence"),
+            ("word", "token"),
+            ("number", "count"),
+        ):
+            code = re.sub(r"\b" + name + r"\b", replacement, code)
+        code = (
+            code.replace("1000", "2048")
+            .replace("return 1;", "return 7;")
+            .replace("Ошибка", "Неверный ввод")
+            .replace("number++", "++number")
+        )
+        body = build(code)
+        self.assertIn(M.Simple(M.INPUT, "Ввод sentence"), body.items)
+        self.assertFalse(any(isinstance(item, M.If) for item in body.items))
+        code = (
+            self.source()
+            .replace(
+                "if (!getline(cin, text))",
+                "getline(std::cin, text); if (std::cin.fail())",
+            )
+            .replace("number++", "++number")
+        )
+        body = build(code)
+        self.assertIn(M.Simple(M.INPUT, "Ввод text"), body.items)
+        self.assertFalse(any(isinstance(item, M.If) for item in body.items))
+
+    def test_effectful_handlers_and_unknown_string_methods_stay(self) -> None:
+        for code in (
+            self.source().replace("return 1;", "audit(); return 1;"),
+            self.source().replace('cout << "Ошибка', 'cout << ++number << "Ошибка'),
+            self.source()
+            .replace("text.empty()", "custom.empty()")
+            .replace("string text;", "string text; Custom custom;"),
+        ):
+            with self.subTest(code=code):
+                body = build(code)
+                self.assertTrue(any(isinstance(item, M.If) for item in body.items))
+                self.assertTrue(any(isinstance(item, M.While) for item in body.items))
+
+    def test_only_proven_word_count_guard_is_hidden(self) -> None:
+        later_stream = (
+            '#include <sstream>\nstd::istringstream iss("external words");\n'
+            + self.source()
+            .replace("    istringstream iss(text);\n", "")
+            .replace(
+                "    if (number == 0)",
+                "    istringstream iss(text);\n    if (number == 0)",
+            )
+        )
+        for code, condition in (
+            (
+                self.source().replace("if (number == 0)", "if (maxNumber == 0)"),
+                "maxNumber == 0",
+            ),
+            (
+                self.source().replace("int number = 0;", "int number = 5;"),
+                "number == 0",
+            ),
+            (
+                self.source().replace("number++;", "if (word.size()>2) number++;"),
+                "number == 0",
+            ),
+            (self.source().replace("number++;", "number++; number=0;"), "number == 0"),
+            (
+                self.source().replace("number++;", "number++; mutate(number);"),
+                "number == 0",
+            ),
+            (later_stream, "number == 0"),
+        ):
+            with self.subTest(condition=condition, code=code):
+                body = build(code)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and item.cond == condition
+                        for item in body.items
+                    )
+                )
+
+    def test_changed_text_and_aliases_do_not_become_input_guards(self) -> None:
+        for code in (
+            self.source().replace(
+                "if (text.size() > 1000)", "text.clear(); if (text.size() > 1000)"
+            ),
+            self.source().replace("string word;", "string& alias=text; string word;"),
+        ):
+            body = build(code)
+            self.assertTrue(
+                any(
+                    isinstance(item, M.If) and "text.size()" in item.cond
+                    for item in body.items
+                )
+            )
+
+    def test_string_macros_shadowing_show_and_full_preserve_guards(self) -> None:
+        for prefix in (
+            "#define size changed_size\n",
+            "#define getline my_read\n",
+            "using string = Custom;\n",
+        ):
+            body = build(prefix + self.source())
+            self.assertTrue(
+                any(
+                    isinstance(item, M.If) and "size()" in item.cond
+                    for item in body.items
+                )
+            )
+        for opts in ({"checks": "show"}, {"study": False}):
+            body = build(self.source(), **opts)
+            self.assertEqual(sum(isinstance(item, M.If) for item in body.items), 4)
+
+    def test_other_functions_keep_string_guards(self) -> None:
+        code = (
+            self.source().replace("int main()", "int helper()")
+            + "\nint main(){return 0;}"
+        )
+        src = code.encode()
+        tree, spec, errors = P.parse_source(src, P.guess_language("input.cpp", code))
+        source = project.Source("input.cpp", src, spec, tree, errors)
+        charts = project.charts(
+            source,
+            Opts(checks="hide"),
+            P.collect_known_names(src, tree.root_node, spec),
+        )
+        body = next(chart.body for chart in charts if not chart.info["main"])
+        self.assertEqual(sum(isinstance(item, M.If) for item in body.items), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

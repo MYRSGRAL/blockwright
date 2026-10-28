@@ -186,20 +186,21 @@ def _merge_tails(frame: Frame) -> None:
             continue
         key = (b[0], b[1], (dx > 0) - (dx < 0), (dy > 0) - (dy < 0))
         groups.setdefault(key, []).append(edge)
-    for (x, y, dx, dy), edges in groups.items():
+    for edges in groups.values():
         if len(edges) < 2:
             continue
-        length = min(
-            abs(e["points"][-1][0] - e["points"][-2][0])
-            + abs(e["points"][-1][1] - e["points"][-2][1])
-            for e in edges
+        trunk = max(
+            edges,
+            key=lambda edge: (
+                abs(edge["points"][-1][0] - edge["points"][-2][0])
+                + abs(edge["points"][-1][1] - edge["points"][-2][1])
+            ),
         )
-        join = (x - dx * length, y - dy * length)
-        arrow = any(e.get("arrow") for e in edges)
+        trunk["arrow"] = any(edge.get("arrow") for edge in edges)
         for edge in edges:
-            edge["points"][-1] = join
-            edge["arrow"] = False
-        frame.edges.append(_edge([join, (x, y)], arrow=arrow))
+            if edge is not trunk:
+                edge["points"].pop()
+                edge["arrow"] = False
     frame.edges = [e for e in frame.edges if len(set(e["points"])) > 1]
 
 
@@ -538,6 +539,7 @@ def _pretest_loop(header_shape, body, opts, labels, pre=None, post=None):
     """Pre-test loop: while and both styles of for."""
     fb = layout(body, opts)
     f = Frame()
+    f.entry_shape = pre is not None
 
     y0 = 0.0
     if pre is not None:

@@ -13,6 +13,30 @@ from blockwright.cli import Opts, build_parser, main
 
 
 class Product(unittest.TestCase):
+    def test_text_input_checks_do_not_hide_the_word_search(self) -> None:
+        source = Path(__file__).parent / "fixtures/study/longest_word.cpp"
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
+            svg = (Path(tmp) / "longest_word__main.svg").read_text(encoding="utf-8")
+            for label in (
+                "Ввод text",
+                "iss = text",
+                "iss &gt;&gt; word",
+                "longestWord = word",
+                "maxNumber = number",
+                "Вывод longestWord, maxNumber",
+            ):
+                self.assertIn(label, svg)
+            for label in (
+                "Введите",
+                "Ошибка",
+                "Возврат 1",
+                "text.empty()",
+                "text.size() &gt; 1000",
+                "number == 0",
+            ):
+                self.assertNotIn(label, svg)
+
     def test_matrix_protocol_is_hidden_in_generated_svg(self) -> None:
         source = Path(__file__).parent / "fixtures/study/matrix.cpp"
         with tempfile.TemporaryDirectory() as tmp:

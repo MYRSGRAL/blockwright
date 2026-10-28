@@ -32,6 +32,59 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_loop_entry_has_one_vertical_arrow_and_keeps_return_arrow(self) -> None:
+        from blockwright.geometry import junction_arrows
+
+        for loop in (
+            M.While("ещё?", M.Simple(M.PROCESS, "работа")),
+            M.ForLoop(
+                M.Seq([M.Simple(M.PROCESS, "работа")]),
+                init=M.Simple(M.PROCESS, "i = 0"),
+                cond="i < n",
+                update=M.Simple(M.PROCESS, "i = i + 1"),
+            ),
+        ):
+            with self.subTest(loop=loop):
+                fn = M.Function(
+                    "main",
+                    "main()",
+                    "Начало",
+                    "",
+                    "",
+                    1,
+                    "cpp",
+                    M.Seq([M.Simple(M.PROCESS, "подготовка"), loop]),
+                )
+                frame = layout_function(fn, options())
+                decision = next(
+                    shape for shape in frame.shapes if shape["kind"] == M.DECISION
+                )
+                x, top = shape_port(decision, "top")
+                previous_bottom = max(
+                    shape["y"] + shape["h"]
+                    for shape in frame.shapes
+                    if shape["y"] + shape["h"] < top and shape["kind"] != M.DECISION
+                )
+                arrows = [
+                    edge for edge in frame.edges if edge.get("arrow")
+                ] + junction_arrows(frame.edges)
+                entry = [
+                    edge
+                    for edge in arrows
+                    if abs(edge["points"][-1][0] - x) < 0.01
+                    and previous_bottom < edge["points"][-1][1] <= top
+                ]
+                self.assertEqual(len(entry), 1)
+                self.assertTrue(
+                    any(
+                        edge["points"][-1][0] < x
+                        and previous_bottom < edge["points"][-1][1] < top
+                        for edge in junction_arrows(frame.edges)
+                    )
+                )
+                self.assertEqual(validate_geometry(frame), [])
+                self.assertEqual(validate_ports(frame), [])
+
     def test_downward_side_channel_has_direction_arrow(self) -> None:
         from blockwright.render import edge_svg
 
