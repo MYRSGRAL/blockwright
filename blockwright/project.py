@@ -24,11 +24,38 @@ class Chart:
     body: M.Seq
 
 
+def _decode_source(src: bytes) -> str:
+    """UTF-8 с BOM либо русские DOS/Windows-исходники без потери символов."""
+    try:
+        return src.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+
+    def score(text: str) -> int:
+        # Неверная пара CP866/CP1251 даёт псевдографику, управляющие символы
+        # или знаки вместо русских букв. При равенстве предпочитаем Windows.
+        return sum(
+            1 if "А" <= char <= "я" or char in "Ёё" else -1
+            for char in text
+            if ord(char) >= 128
+        )
+
+    candidates = []
+    for encoding in ("cp1251", "cp866"):
+        try:
+            candidates.append(src.decode(encoding))
+        except UnicodeDecodeError:
+            continue
+    return max(candidates, key=score)
+
+
 def load(path, only=None) -> Source | None:
     """Read and parse one file; None if it is unreadable or no language fits."""
     with open(path, "rb") as fh:
         src = fh.read()
-    spec = P.guess_language(path, src.decode("utf-8", "replace"), only)
+    text = _decode_source(src)
+    src = text.encode("utf-8")
+    spec = P.guess_language(path, text, only)
     if spec is None:
         return None
     tree, spec, errs = P.parse_source(src, spec)

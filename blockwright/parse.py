@@ -7,7 +7,7 @@ see blockwright/langs.py.
 import os
 import re
 
-from tree_sitter import Parser
+from tree_sitter import Node, Parser
 
 from .langs import find, find_all, registry
 from .text import normalize
@@ -86,6 +86,38 @@ def guess_language(path, src_text, only=None):
     return registry().guess(path, src_text, only)
 
 
+def _cpp_pointer_arrays(src: bytes, root: Node) -> bytes:
+    """Обход дефекта грамматики new T*[n] без изменения байтовых позиций.
+
+    Грамматика завершает new_expression на T и оставляет *[n] в ERROR.
+    Маскируем только указатели перед размерностью: оригинал остаётся в Source.src
+    и используется при построении подписей. Тип T и выражение n не меняются.
+    """
+    expressions = []
+    errors = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        stack.extend(node.named_children)
+        if node.type == "new_expression":
+            expressions.append(node)
+        elif node.type == "ERROR":
+            errors.add(node.start_byte)
+    pointer_array = re.compile(rb"\s*(?:\*\s*)+(?=\[)")
+    masked = bytearray(src)
+    for node in expressions:
+        suffix = pointer_array.match(src, node.end_byte)
+        if (
+            suffix is None
+            or src.index(b"*", suffix.start(), suffix.end()) not in errors
+        ):
+            continue
+        for offset, value in enumerate(suffix.group(), node.end_byte):
+            if value == ord("*"):
+                masked[offset] = ord(" ")
+    return bytes(masked)
+
+
 def parse_source(src: bytes, spec):
     """Parse with the language's grammar; on syntax errors try its `retry` ones.
 
@@ -100,6 +132,13 @@ def parse_source(src: bytes, spec):
             continue
         tree = Parser(lang).parse(src)
         errs = count_errors(tree.root_node)
+        if errs and s.name == "cpp":
+            compatible = _cpp_pointer_arrays(src, tree.root_node)
+            if compatible != src:
+                retry = Parser(lang).parse(compatible)
+                retry_errors = count_errors(retry.root_node)
+                if retry_errors < errs:
+                    tree, errs = retry, retry_errors
         if errs == 0:
             return tree, s, 0
         if best is None or errs < best[2]:
