@@ -33,6 +33,7 @@ class StudyBuilder(Builder):
 
     def build_body(self, body: Any, is_main: bool = False) -> M.Seq:
         self._shadowed = set()
+        self._type_names = set()
         self._macro_names = set()
         nodes = list(body) if isinstance(body, list) else [body]
         if not isinstance(body, list):
@@ -62,6 +63,7 @@ class StudyBuilder(Builder):
                     )
                     if name is not None:
                         self._shadowed.add(self.raw(name))
+                        self._type_names.add(self.raw(name))
                 macro_nodes.extend(node.named_children)
             global_nodes = [root]
             while global_nodes:
@@ -152,6 +154,12 @@ class StudyBuilder(Builder):
                         )
                         else "integer"
                     )
+                elif (
+                    target.type == "identifier"
+                    and self._name(typ, "string")
+                    and not any(self.raw(c) == "volatile" for c in node.named_children)
+                ):
+                    category = "string"
                 elif primitive and target.type == "array_declarator":
                     element = target
                     rank = 0
@@ -169,6 +177,11 @@ class StudyBuilder(Builder):
         self._integer_names = {
             name for name, kinds in categories.items() if kinds == {"integer"}
         } - self._macro_names
+        self._string_names = (
+            {name for name, kinds in categories.items() if kinds == {"string"}}
+            - self._macro_names
+            - self._type_names
+        )
         self._array_names = {
             name
             for name, kinds in categories.items()
@@ -289,6 +302,8 @@ class StudyBuilder(Builder):
         typ = node.child_by_field_name("type")
         if self.raw(typ) in self._macro_names:
             return None
+        if self._name(typ, "istringstream"):
+            return self._string_stream_declaration(node)
         if typ is None or not (
             typ.type in {"primitive_type", "sized_type_specifier"}
             or self._name(typ, "string")
@@ -331,6 +346,35 @@ class StudyBuilder(Builder):
                 return None
             texts.append(f"{self.t(target)} = {self.t(value)}")
         return [M.Simple(M.PROCESS, text) for text in texts]
+
+    def _string_stream_declaration(self, node: Any) -> list[object] | None:
+        if any(
+            self.raw(c) in {"volatile", "static", "thread_local", "extern"}
+            for c in node.named_children
+        ):
+            return None
+        declarations = node.children_by_field_name("declarator")
+        if len(declarations) != 1:
+            return None
+        declarator = declarations[0]
+        name = declarator.child_by_field_name("declarator")
+        if declarator.type == "function_declarator":
+            parameters = declarator.child_by_field_name("parameters")
+        elif declarator.type == "init_declarator":
+            parameters = declarator.child_by_field_name("value")
+            if parameters is None or parameters.type != "initializer_list":
+                return None
+        else:
+            return None
+        if name is None or name.type != "identifier" or parameters is None:
+            return None
+        args = self.named(parameters)
+        if len(args) != 1:
+            return None
+        source = self.raw(args[0])
+        if source not in self._string_names or self.raw(name) in self._macro_names:
+            return None
+        return [M.Simple(M.PROCESS, f"{self.t(name)} = поток из {source}")]
 
     def k_simple(self, n: Any, r: dict) -> list[object]:
         declarations = self._declaration(n)

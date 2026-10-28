@@ -47,6 +47,32 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_string_stream_construction_is_an_action_without_cpp_type(self) -> None:
+        for declaration in (
+            "std::istringstream words(text);",
+            "std::istringstream words{text};",
+        ):
+            with self.subTest(declaration=declaration):
+                body = chart("int main(){std::string text;" + declaration + "}")
+                self.assertEqual(
+                    body.items, [M.Simple(M.PROCESS, "words = поток из text")]
+                )
+
+    def test_unknown_stream_constructor_is_preserved(self) -> None:
+        for code in (
+            "std::string text;int main(){using text=int;std::istringstream words(text);}",
+            "struct istringstream{};int main(){std::string text;istringstream words(text);}",
+            "int main(){Widget text;std::istringstream words(text);}",
+            "int main(){std::string text;std::istringstream words(make_text());}",
+        ):
+            with self.subTest(code=code):
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.Simple) and "istringstream" in item.text
+                        for item in chart(code).items
+                    )
+                )
+
     def test_standalone_increment_and_decrement_have_explicit_assignment(self) -> None:
         for expression, expected in (
             ("count++", "count = count + 1"),
@@ -445,7 +471,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; std::getline(std::cin,line); std::istringstream input(line); log(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) fail(); return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("istringstream input(line)", text)
+        self.assertIn("input = поток из line", text)
         self.assertIn("log(line)", text)
 
     def test_shadowed_standard_names_preserve_original_operations(self) -> None:
@@ -466,7 +492,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; std::getline(std::cin,line); std::istringstream input(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) {log(line); return 1;} return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("istringstream input(line)", text)
+        self.assertIn("input = поток из line", text)
 
     def test_function_parameter_stream_is_not_mistaken_for_cout(self) -> None:
         body = chart("int f(Sink& cout){cout << value; return 0;}")
@@ -498,7 +524,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; char extra; std::getline(std::cin,line); std::istringstream input(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) return 1; use(extra); return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("istringstream input(line)", text)
+        self.assertIn("input = поток из line", text)
 
     def test_dynamic_error_output_retains_message_and_argument(self) -> None:
         body = chart(
