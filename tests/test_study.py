@@ -47,6 +47,33 @@ _RETRY_INPUT = r"""while (true) {
 
 
 class StudySemantics(unittest.TestCase):
+    def test_adjacent_literal_assignments_share_one_process_block(self) -> None:
+        body = chart("int main(){int i,j;i=0;j=1;}")
+        self.assertEqual(body.items, [M.Simple(M.PROCESS, "i = 0; j = 1")])
+
+    def test_literal_group_stops_before_an_abstracted_input_loop(self) -> None:
+        body = chart(
+            'int main(){int a[2],n=2,i;int count=0;i=0;while(i<n && (std::cin>>a[i])){i++;}if(i!=n){std::cout<<"Ошибка";return 1;}std::cout<<count;}',
+            checks="hide",
+        )
+        self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertIn(M.Simple(M.PROCESS, "count = 0"), body.items)
+
+    def test_assignment_group_does_not_absorb_calls_or_unknown_types(self) -> None:
+        for code in (
+            "int main(){int i,j;i=0;read();j=1;}",
+            "int main(){Counter i;int j;i=0;j=1;}",
+            "int main(){volatile int i;int j;i=0;j=1;}",
+        ):
+            with self.subTest(code=code):
+                body = chart(code)
+                self.assertFalse(
+                    any(
+                        isinstance(item, M.Simple) and item.text == "i = 0; j = 1"
+                        for item in body.items
+                    )
+                )
+
     def test_string_stream_construction_is_an_action_without_cpp_type(self) -> None:
         for declaration in (
             "std::istringstream words(text);",
@@ -554,9 +581,7 @@ class StudySemantics(unittest.TestCase):
                 "c = 5",
                 "static int s=6",
                 "d = read()",
-                "e = 7",
-                "a=8",
-                "b=9",
+                "e = 7; a = 8; b = 9",
             ],
         )
 

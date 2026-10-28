@@ -380,7 +380,34 @@ class StudyBuilder(Builder):
         declarations = self._declaration(n)
         return declarations if declarations is not None else super().k_simple(n, r)
 
+    def _literal_value(self, value: Any) -> bool:
+        value = self._unwrap(value)
+        if value is None:
+            return False
+        if value.type == "unary_expression" and self.op_of(value) in {"+", "-"}:
+            argument = self._unwrap(value.child_by_field_name("argument"))
+            return argument is not None and argument.type == "number_literal"
+        return value.type in {"number_literal", "char_literal", "true", "false"}
+
     def _literal_initializations(self, node: Any) -> list[str] | None:
+        if node.type == "expression_statement":
+            expression = self._unwrap(self._expr(node))
+            if (
+                expression is None
+                or expression.type != "assignment_expression"
+                or self.op_of(expression) != "="
+            ):
+                return None
+            target, value = self.sides(expression)
+            if (
+                target is None
+                or target.type != "identifier"
+                or self.raw(target) not in self._scalar_names
+                or not self._literal_value(value)
+            ):
+                return None
+            text = f"{self.t(target)} = {self.t(value)}"
+            return [text] if len(text) <= _MAX_INITIALIZATION_TEXT else None
         if node.type != "declaration":
             return None
         statements = self._declaration(node)
@@ -390,21 +417,7 @@ class StudyBuilder(Builder):
         if len(declarations) != len(statements):
             return None
         for declaration in declarations:
-            value = self._unwrap(declaration.child_by_field_name("value"))
-            if (
-                value is not None
-                and value.type == "unary_expression"
-                and self.op_of(value) in {"+", "-"}
-            ):
-                value = self._unwrap(value.child_by_field_name("argument"))
-                if value is None or value.type != "number_literal":
-                    return None
-            elif value is None or value.type not in {
-                "number_literal",
-                "char_literal",
-                "true",
-                "false",
-            }:
+            if not self._literal_value(declaration.child_by_field_name("value")):
                 return None
         texts = [statement.text for statement in statements]
         return texts if len("; ".join(texts)) <= _MAX_INITIALIZATION_TEXT else None
@@ -1008,6 +1021,11 @@ class StudyBuilder(Builder):
             if initializations:
                 next_index = index + 1
                 while next_index < len(nodes):
+                    if (
+                        next_index in input_plan.groups
+                        or next_index in input_plan.hidden
+                    ):
+                        break
                     following = self._literal_initializations(nodes[next_index])
                     if (
                         not following
