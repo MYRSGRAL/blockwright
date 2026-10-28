@@ -87,13 +87,17 @@ class _Recognizer:
                 if target is not None:
                     self.declarations[builder.raw(target)] = position, node
             target = node.child_by_field_name("declarator")
+            declarators = node.children_by_field_name("declarator")
             if (
-                target is not None
-                and target.type == "identifier"
-                and len(node.children_by_field_name("declarator")) == 1
+                declarators
+                and all(part.type == "identifier" for part in declarators)
                 and builder._name(node.child_by_field_name("type"), "string")
+                and all(
+                    builder.raw(part) in builder._string_names for part in declarators
+                )
             ):
-                self.buffers[builder.raw(target)] = position
+                for part in declarators:
+                    self.buffers[builder.raw(part)] = position
             if (
                 target is not None
                 and target.type == "identifier"
@@ -1212,6 +1216,21 @@ class _Recognizer:
                     return InputGroup(
                         end + 1, "Ввод " + ", ".join(targets), buffer, stream, scratch
                     )
+            if end + 1 < len(self.nodes):
+                rank = self.rank_loop(self.nodes[end], [], [], stream)
+                if rank is not None and not rank.buffer:
+                    scratch = self.tail(self.nodes[end + 1], stream, rank.bounds[-1])
+                    finish = end + 2
+                    if scratch and all(
+                        local or self.index_disposable(index, finish)
+                        for index, local in rank.indices
+                    ):
+                        target = rank.array + "".join(
+                            f"[{bound}]" for bound in rank.bounds
+                        )
+                        return InputGroup(
+                            finish, "Ввод " + target, buffer, stream, scratch
+                        )
         if position + 2 >= len(self.nodes):
             return None
         call = self.b._expr(self.nodes[position])

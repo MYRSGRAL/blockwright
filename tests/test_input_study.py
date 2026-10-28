@@ -566,6 +566,71 @@ class MatrixInputGroups(unittest.TestCase):
                 )
 
 
+class BufferedLocalIndex(unittest.TestCase):
+    @staticmethod
+    def source() -> str:
+        return (Path(__file__).parent / "fixtures/study/pairs_while.cpp").read_text(
+            encoding="utf-8"
+        )
+
+    def test_shared_buffer_declaration_and_local_read_counter(self) -> None:
+        body = build(self.source())
+        inputs = [
+            item.text
+            for item in walk(body)
+            if isinstance(item, M.Simple) and item.kind == M.INPUT
+        ]
+        self.assertEqual(inputs, ["Ввод n", "Ввод a[n]"])
+        self.assertEqual(
+            [item.cond for item in walk(body) if isinstance(item, M.While)],
+            ["i < n - 1"],
+        )
+        self.assertEqual(
+            [item.cond for item in walk(body) if isinstance(item, M.If)],
+            ["a[i] < a[j]", "j == n"],
+        )
+        self.assertFalse(any(isinstance(item, M.ForLoop) for item in walk(body)))
+        self.assertIn(M.Simple(M.OUTPUT, "Вывод count"), body.items)
+
+    def test_separate_buffers_and_renamed_local_index_are_equivalent(self) -> None:
+        for buffers in ("string line, elements;", "string line;string elements;"):
+            code = self.source().replace("string line, elements;", buffers)
+            code = code.replace(
+                "int k = 0; k < n; k++", "int position = 0; position < n; position++"
+            ).replace("a[k]", "a[position]")
+            body = build(code)
+            self.assertIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+
+    def test_effectful_error_and_mixed_declaration_are_preserved(self) -> None:
+        for code in (
+            self.source().replace("return 1;", "audit();return 1;"),
+            self.source().replace(
+                "string line, elements;", "string line, elements, keep = make_label();"
+            ),
+        ):
+            with self.subTest(code=code):
+                body = build(code)
+                self.assertTrue(any(isinstance(item, M.ForLoop) for item in walk(body)))
+                if "make_label" in code:
+                    self.assertTrue(
+                        any(
+                            isinstance(item, M.Simple) and "make_label()" in item.text
+                            for item in walk(body)
+                        )
+                    )
+
+    def test_show_and_full_keep_buffered_checks(self) -> None:
+        for opts in ({"checks": "show"}, {"study": False}):
+            with self.subTest(opts=opts):
+                body = build(self.source(), **opts)
+                self.assertTrue(
+                    any(
+                        isinstance(item, M.If) and "input >> a[k]" in item.cond
+                        for item in walk(body)
+                    )
+                )
+
+
 class TextInputGroups(unittest.TestCase):
     @staticmethod
     def source() -> str:
