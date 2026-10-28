@@ -54,9 +54,7 @@ class StudySemantics(unittest.TestCase):
         ):
             with self.subTest(declaration=declaration):
                 body = chart("int main(){std::string text;" + declaration + "}")
-                self.assertEqual(
-                    body.items, [M.Simple(M.PROCESS, "words = поток из text")]
-                )
+                self.assertEqual(body.items, [M.Simple(M.PROCESS, "words = text")])
 
     def test_unknown_stream_constructor_is_preserved(self) -> None:
         for code in (
@@ -471,7 +469,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; std::getline(std::cin,line); std::istringstream input(line); log(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) fail(); return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("input = поток из line", text)
+        self.assertIn("input = line", text)
         self.assertIn("log(line)", text)
 
     def test_shadowed_standard_names_preserve_original_operations(self) -> None:
@@ -492,7 +490,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; std::getline(std::cin,line); std::istringstream input(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) {log(line); return 1;} return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("input = поток из line", text)
+        self.assertIn("input = line", text)
 
     def test_function_parameter_stream_is_not_mistaken_for_cout(self) -> None:
         body = chart("int f(Sink& cout){cout << value; return 0;}")
@@ -524,7 +522,7 @@ class StudySemantics(unittest.TestCase):
             "int main(){std::string line; char extra; std::getline(std::cin,line); std::istringstream input(line); if (!(input >> x) || (input >> extra) || !std::isfinite(x)) return 1; use(extra); return 0;}"
         )
         text = " ".join(item.text for item in body.items if isinstance(item, M.Simple))
-        self.assertIn("input = поток из line", text)
+        self.assertIn("input = line", text)
 
     def test_dynamic_error_output_retains_message_and_argument(self) -> None:
         body = chart(

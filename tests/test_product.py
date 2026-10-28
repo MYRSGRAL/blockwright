@@ -20,7 +20,7 @@ class Product(unittest.TestCase):
             svg = (Path(tmp) / "longest_word__main.svg").read_text(encoding="utf-8")
             for label in (
                 "Ввод text",
-                "iss = поток из text",
+                "iss = text",
                 "iss &gt;&gt; word",
                 "longestWord = word",
                 "maxNumber = number",

@@ -595,7 +595,7 @@ class TextInputGroups(unittest.TestCase):
             "Вывод longestWord, maxNumber",
         ):
             self.assertIn(text, texts)
-        self.assertTrue(any("поток из text" in text for text in texts))
+        self.assertTrue(any("iss = text" in text for text in texts))
         self.assertFalse(any("Ошибка" in text or "Введите" in text for text in texts))
 
     def test_other_names_bounds_exit_codes_and_standalone_getline(self) -> None:

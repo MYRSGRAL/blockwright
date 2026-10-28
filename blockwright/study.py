@@ -374,7 +374,7 @@ class StudyBuilder(Builder):
         source = self.raw(args[0])
         if source not in self._string_names or self.raw(name) in self._macro_names:
             return None
-        return [M.Simple(M.PROCESS, f"{self.t(name)} = поток из {source}")]
+        return [M.Simple(M.PROCESS, f"{self.t(name)} = {source}")]
 
     def k_simple(self, n: Any, r: dict) -> list[object]:
         declarations = self._declaration(n)
