@@ -292,8 +292,10 @@ class _Recognizer:
 
     def getline_target(self, node: Any) -> str | None:
         node = self.b._unwrap(self.b._expr(node))
-        if node.type != "call_expression" or not self.b._name(
-            node.child_by_field_name("function"), "getline"
+        if (
+            node is None
+            or node.type != "call_expression"
+            or not self.b._name(node.child_by_field_name("function"), "getline")
         ):
             return None
         args = self.b.call_args(node)
@@ -1293,6 +1295,323 @@ class _Recognizer:
             return InputGroup(end, "Ввод " + target, buffer, stream, scratch, index)
         return None
 
+    def conjunctions(self, node: Any) -> list[Any]:
+        node = self.b._unwrap(node)
+        if self.b.op_of(node) == "&&":
+            left, right = self.b.sides(node)
+            return self.conjunctions(left) + self.conjunctions(right)
+        return [node]
+
+    def retry_prompt(self, node: Any, indices: list[str]) -> bool:
+        stream = self.b._stream_parts(self.b._expr(node))
+        if not stream or stream[0] != M.OUTPUT:
+            return False
+
+        def value(part: Any) -> bool:
+            part = self.b._unwrap(part)
+            if self.scalar(part) or self.b.raw(part) in indices:
+                return True
+            if part.type == "number_literal":
+                return True
+            if part.type == "binary_expression" and self.b.op_of(part) in {"+", "-"}:
+                left, right = self.b.sides(part)
+                return value(left) and value(right)
+            return False
+
+        literals = []
+        for part in stream[1]:
+            text = self.b._string_value(part)
+            if text is not None:
+                literals.append(text)
+            elif not self.b._display_manipulator(part) and not value(part):
+                return False
+        text = "".join(literals).lower()
+        return any(word in text for word in ("введите", "enter", "input"))
+
+    def retry_loop(self, node: Any, indices: list[str]) -> InputGroup | None:
+        if node.type != "while_statement" or not self.macro_free(node):
+            return None
+        condition = self.condition(node)
+        if condition is None or condition.type != "true":
+            return None
+        body = self.b._statements(node.child_by_field_name("body"))
+        if len(body) < 5 or not self.retry_prompt(body[0], indices):
+            return None
+        local = _Recognizer(self.b, body)
+        local.declarations = self.declarations | local.declarations
+        local.buffers = self.buffers | local.buffers
+        local.streams = self.streams | local.streams
+        setup = local.setup(body, 1)
+        if setup is None:
+            return None
+        cursor, buffer, stream = setup
+        if (
+            cursor >= len(body) - 1
+            or local.stream_source(body[cursor - 1]) != (stream, buffer)
+            or local.declarations[buffer][1].end_byte >= body[1].start_byte
+        ):
+            return None
+        check = body[cursor]
+        if (
+            check.type != "if_statement"
+            or check.child_by_field_name("alternative") is not None
+        ):
+            return None
+        success = self.b._statements(check.child_by_field_name("consequence"))
+        condition = local.condition(check)
+        if (
+            len(success) != 1
+            or success[0].type != "break_statement"
+            or condition is None
+        ):
+            return None
+        atoms = local.conjunctions(condition)
+        if len(atoms) < 2:
+            return None
+        target = local.read(atoms[0], stream)
+        if indices:
+            name = local.array_coordinates(target, indices)
+        else:
+            name = self.b.raw(target) if local.scalar(target) else None
+        scratch = local.extra(local.negated(atoms[-1]), stream)
+        if not name or not scratch or scratch == name:
+            return None
+
+        # Логические комбинации сравнений допустимы; вызовы и изменения — нет.
+        def validation(atom: Any) -> bool:
+            atom = self.b._unwrap(atom)
+            if self.b.op_of(atom) in {"&&", "||"}:
+                left, right = self.b.sides(atom)
+                return validation(left) and validation(right)
+            return local.validation_atoms([atom], {name})
+
+        if not all(validation(atom) for atom in atoms[1:-1]):
+            return None
+        if not all(
+            self.b._static_stream_output(part) is not None
+            for part in body[cursor + 1 :]
+        ):
+            return None
+        return InputGroup(0, "Ввод " + name, buffer, stream, scratch)
+
+    def retry_candidate(self, position: int) -> InputGroup | None:
+        node = self.nodes[position]
+        indices: list[tuple[str, bool]] = []
+        bounds: list[str] = []
+        while node.type == "for_statement":
+            initializer = node.child_by_field_name("initializer")
+            local = self.local_index(initializer)
+            index = local or (
+                self.zero_assignment(initializer) if initializer is not None else None
+            )
+            if not index or index in {name for name, _ in indices}:
+                return None
+            count = self.bound(node.child_by_field_name("condition"), index)
+            update = node.child_by_field_name("update")
+            body = self.b._statements(node.child_by_field_name("body"))
+            if (
+                not count
+                or update is None
+                or not self.increment(update, index)
+                or len(body) != 1
+            ):
+                return None
+            indices.append((index, local is not None))
+            bounds.append(count)
+            node = body[0]
+        group = self.retry_loop(node, [name for name, _ in indices])
+        if group is None or any(
+            not local
+            and not self.retry_index_disposable(
+                self.nodes[position], index, position + 1
+            )
+            for index, local in indices
+        ):
+            return None
+        group.end = position + 1
+        group.text += "".join(f"[{bound}]" for bound in bounds)
+        return group
+
+    def retry_index_disposable(self, node: Any, index: str, end: int) -> bool:
+        if not self.index_disposable(index, end):
+            return False
+        declaration = self.declarations[index][1]
+        scope = declaration.parent
+        if scope is None or scope.type != "compound_statement":
+            return False
+        enclosing = _Recognizer(self.b, self.b._statements(scope))
+        if enclosing.index_escapes.get(index):
+            return False
+        live = True
+        current = node
+        while (
+            current.parent is not None and current.parent.type != "function_definition"
+        ):
+            parent = current.parent
+            if parent.type == "compound_statement":
+                statements = self.b._statements(parent)
+                if current not in statements:
+                    return False
+                for following in statements[statements.index(current) + 1 :]:
+                    safe, live = self.index_flow(following, index, live)
+                    if not safe:
+                        return False
+                    if not live:
+                        return True
+            elif parent.type in {
+                "for_statement",
+                "while_statement",
+                "do_statement",
+                "lambda_expression",
+            }:
+                # Следующий проход внешнего цикла может наблюдать изменённый индекс.
+                return False
+            current = parent
+        return True
+
+    def error_continue(self, node: Any) -> bool:
+        if (
+            node.type != "if_statement"
+            or node.child_by_field_name("alternative") is not None
+            or not self.macro_free(node)
+        ):
+            return False
+        body = self.b._statements(node.child_by_field_name("consequence"))
+        return (
+            len(body) >= 2
+            and body[-1].type == "continue_statement"
+            and all(
+                self.b._static_stream_output(part) is not None for part in body[:-1]
+            )
+        )
+
+    def interactive_text(self, block: Any) -> InputPlan:
+        plan = InputPlan()
+        loop = block.parent
+        if loop is None or loop.type != "while_statement":
+            return plan
+        condition = self.condition(loop)
+        if condition is None or condition.type != "true":
+            return plan
+        for position, node in enumerate(self.nodes):
+            name = self.getline_target(node)
+            if not name or not self.macro_free(node):
+                continue
+            end = position + 1
+            one_character = False
+            while end < len(self.nodes):
+                guard = self.nodes[end]
+                condition = (
+                    self.condition(guard) if guard.type == "if_statement" else None
+                )
+                if (
+                    condition is None
+                    or self.string_validation(condition) != name
+                    or not self.error_continue(guard)
+                ):
+                    break
+                left, right = self.b.sides(condition)
+                one_character |= (
+                    self.b.op_of(condition) == "!="
+                    and self.string_measure(left, {"length", "size"}) == name
+                    and self.b.raw(right) == "1"
+                )
+                end += 1
+            if end == position + 1:
+                continue
+            start = (
+                position - 1
+                if position and self.retry_prompt(self.nodes[position - 1], [])
+                else position
+            )
+            plan.groups[start] = InputGroup(end, "Ввод " + name)
+            if not one_character:
+                continue
+            # После проверки длины разрешён локальный char из единственного символа.
+            cursor = end
+            if cursor < len(self.nodes) and self.nodes[cursor].type == "if_statement":
+                control = self.nodes[cursor]
+                body = self.b._statements(control.child_by_field_name("consequence"))
+                condition = self.condition(control)
+                left, right = self.b.sides(condition)
+                if (
+                    len(body) == 1
+                    and body[0].type == "break_statement"
+                    and control.child_by_field_name("alternative") is None
+                    and self.macro_free(control)
+                    and self.b.op_of(condition) == "=="
+                    and self.character_at_zero(left, name)
+                    and right is not None
+                    and right.type == "char_literal"
+                ):
+                    cursor += 1
+            if cursor + 1 >= len(self.nodes):
+                continue
+            declaration, guard = self.nodes[cursor : cursor + 2]
+            if (
+                declaration.type != "declaration"
+                or self.b.raw(declaration.child_by_field_name("type")) != "char"
+                or len(declaration.children_by_field_name("declarator")) != 1
+                or not self.macro_free(declaration)
+                or any(
+                    self.b.raw(child)
+                    in {"volatile", "static", "extern", "thread_local"}
+                    for child in declaration.named_children
+                )
+            ):
+                continue
+            declarator = declaration.child_by_field_name("declarator")
+            value = declarator.child_by_field_name("value")
+            target = declarator.child_by_field_name("declarator")
+            if (
+                target is None
+                or target.type != "identifier"
+                or not self.character_at_zero(value, name)
+            ):
+                continue
+            condition = self.condition(guard) if guard.type == "if_statement" else None
+            if condition is None or not self.error_continue(guard):
+                continue
+            valid = True
+            for atom in self.atoms(condition):
+                left, right = self.b.sides(atom)
+                if (
+                    self.b.op_of(atom) != "=="
+                    or self.b.raw(left) != self.b.raw(target)
+                    or right is None
+                    or right.type != "char_literal"
+                ):
+                    valid = False
+                    break
+            if valid:
+                plan.hidden.add(cursor + 1)
+        return plan
+
+    def character_at_zero(self, node: Any, name: str) -> bool:
+        node = self.b._unwrap(node)
+        if node is None or node.type != "subscript_expression":
+            return False
+        arguments = node.child_by_field_name("indices")
+        return (
+            self.b.raw(node.child_by_field_name("argument")) == name
+            and arguments is not None
+            and len(arguments.named_children) == 1
+            and self.b.raw(arguments.named_children[0]) == "0"
+        )
+
+
+def _retry_context(builder: Any, block: Any, nodes: list[Any]) -> _Recognizer:
+    recognizer = _Recognizer(builder, nodes)
+    ancestor = block.parent
+    while ancestor is not None and ancestor.type != "function_definition":
+        if ancestor.type == "compound_statement":
+            outer = _Recognizer(builder, builder._statements(ancestor))
+            recognizer.declarations = outer.declarations | recognizer.declarations
+            recognizer.buffers = outer.buffers | recognizer.buffers
+            recognizer.streams = outer.streams | recognizer.streams
+        ancestor = ancestor.parent
+    return recognizer
+
 
 def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPlan:
     """Скрывать проверки разрешено только в main и явном учебном режиме hide."""
@@ -1325,10 +1644,10 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         not builder.fn_is_main
         or getattr(builder.opts, "checks", "hide") != "hide"
         or block.parent is None
-        or block.parent.type != "function_definition"
     ):
         return plan
-    recognizer = _Recognizer(builder, nodes)
+    main_block = block.parent.type == "function_definition"
+    recognizer = _retry_context(builder, block, nodes)
     root = block
     while root.parent is not None:
         root = root.parent
@@ -1344,13 +1663,87 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             )
             if builder.raw(name) in {"string", "istringstream"}:
                 return plan
+    function = block
+    while function.parent is not None and function.parent.type != "function_definition":
+        function = function.parent
+    # Буфер может обслуживать несколько протоколов в разных ветвях main.
+    retry_spans: dict[str, list[tuple[int, int]]] = {}
+    for scope in recognizer.walk(function):
+        if scope.type != "compound_statement":
+            continue
+        statements = builder._statements(scope)
+        context = _retry_context(builder, scope, statements)
+        for statement in statements:
+            group = context.retry_loop(statement, [])
+            if group is None:
+                # Внутри for индексы доступны из его заголовков.
+                indices = []
+                ancestor = statement.parent
+                while ancestor is not None and ancestor != function:
+                    if ancestor.type == "for_statement":
+                        initializer = ancestor.child_by_field_name("initializer")
+                        index = context.local_index(initializer) or (
+                            context.zero_assignment(initializer)
+                            if initializer is not None
+                            else None
+                        )
+                        if index:
+                            indices.insert(0, index)
+                    ancestor = ancestor.parent
+                group = context.retry_loop(statement, indices) if indices else None
+            if group is not None:
+                for name in (group.buffer, group.stream, group.scratch):
+                    retry_spans.setdefault(name, []).append(
+                        (statement.start_byte, statement.end_byte)
+                    )
+
+    def retry_references_safe(name: str, node: Any) -> bool:
+        return all(
+            any(
+                start <= reference.start_byte and reference.end_byte <= end
+                for start, end in retry_spans.get(name, [])
+            )
+            for reference in recognizer.walk(node)
+            if reference.type == "identifier" and builder.raw(reference) == name
+        )
+
+    declarations: dict[str, set[int]] = {}
+    for declaration in recognizer.walk(function):
+        if declaration.type != "declaration":
+            continue
+        for declarator in declaration.children_by_field_name("declarator"):
+            leaf = declarator
+            while leaf is not None and leaf.type != "identifier":
+                leaf = leaf.child_by_field_name("declarator")
+            if leaf is not None:
+                declarations.setdefault(builder.raw(leaf), set()).add(leaf.start_byte)
+    unsafe_resources = {
+        name
+        for name in retry_spans
+        if any(
+            reference.type == "identifier"
+            and builder.raw(reference) == name
+            and reference.start_byte not in declarations.get(name, set())
+            and not retry_references_safe(name, reference)
+            for reference in recognizer.walk(function)
+        )
+    }
+
     candidates = {}
     for position in range(len(nodes)):
-        group = (
+        retry = recognizer.retry_candidate(position)
+        if retry is not None and any(
+            name in unsafe_resources
+            for name in (retry.buffer, retry.stream, retry.scratch)
+        ):
+            retry = None
+        group = retry or (
             recognizer.candidate(position)
             or recognizer.ranked_candidate(position)
             or recognizer.direct(position)
             or recognizer.text_candidate(position)
+            if main_block
+            else None
         )
         if group is None:
             continue
@@ -1383,7 +1776,10 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
                 allowed = covered | (
                     {declaration[0]} if declaration is not None else set()
                 )
-                if recognizer.references.get(name, set()) - allowed:
+                if any(
+                    not retry_references_safe(name, nodes[position])
+                    for position in recognizer.references.get(name, set()) - allowed
+                ):
                     invalid.add(start)
         if not invalid:
             break
@@ -1391,15 +1787,37 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             start: group for start, group in candidates.items() if start not in invalid
         }
     plan.groups = candidates
+    interactive = recognizer.interactive_text(block)
+    plan.groups.update(interactive.groups)
     plan.hidden = {
-        recognizer.buffers[group.buffer]
+        position
+        for position, node in enumerate(nodes)
+        if node.type == "declaration"
+        and any(
+            declaration == node
+            and name in retry_spans
+            and name not in unsafe_resources
+            and all(
+                other == position or retry_references_safe(name, statement)
+                for other, statement in enumerate(nodes)
+                if other in recognizer.references.get(name, set())
+            )
+            for name, (_, declaration) in recognizer.declarations.items()
+            if name in recognizer.buffers
+        )
+    }
+    plan.hidden.update(
+        position
         for group in candidates.values()
         if group.buffer
-    }
+        for position, node in enumerate(nodes)
+        if recognizer.declarations.get(group.buffer, (None, None))[1] == node
+    )
     plan.hidden.update(
         recognizer.streams[group.stream]
         for group in candidates.values()
         if group.stream in recognizer.streams
     )
     plan.hidden.update(recognizer.hidden_text_guards(candidates))
+    plan.hidden.update(interactive.hidden)
     return plan

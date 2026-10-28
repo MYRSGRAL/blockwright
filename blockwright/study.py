@@ -109,6 +109,28 @@ class StudyBuilder(Builder):
             name: sorted(positions)
             for name, positions in self._identifier_positions.items()
         }
+        self._dimension_names = set()
+        for declaration in all_nodes:
+            if declaration.type not in {"declaration", "parameter_declaration"}:
+                continue
+            typ = declaration.child_by_field_name("type")
+            if (
+                typ is None
+                or typ.type not in {"primitive_type", "sized_type_specifier"}
+                or self.raw(typ) in self._macro_names
+                or any(word in self.raw(typ) for word in ("float", "double", "void"))
+                or any(self.raw(c) == "volatile" for c in declaration.named_children)
+            ):
+                continue
+            for part in declaration.children_by_field_name("declarator"):
+                target = (
+                    part.child_by_field_name("declarator")
+                    if part.type == "init_declarator"
+                    else part
+                )
+                if target is not None and target.type == "identifier":
+                    self._dimension_names.add(self.raw(target))
+        self._dimension_names -= self._macro_names
         categories: dict[str, set[str]] = {}
         array_ranks: dict[str, set[int]] = {}
         for node in all_nodes:
@@ -160,6 +182,22 @@ class StudyBuilder(Builder):
                     and not any(self.raw(c) == "volatile" for c in node.named_children)
                 ):
                     category = "string"
+                elif (
+                    primitive
+                    and target.type == "pointer_declarator"
+                    and (
+                        declarator.type == "init_declarator"
+                        and self._plain_new(declarator.child_by_field_name("value"))
+                    )
+                ):
+                    element = target
+                    rank = 0
+                    while element is not None and element.type == "pointer_declarator":
+                        rank += 1
+                        element = element.child_by_field_name("declarator")
+                    if element is not None and element.type == "identifier":
+                        category = "array"
+                        array_ranks.setdefault(self.raw(leaf), set()).add(rank)
                 elif primitive and target.type == "array_declarator":
                     element = target
                     rank = 0
@@ -177,6 +215,7 @@ class StudyBuilder(Builder):
         self._integer_names = {
             name for name, kinds in categories.items() if kinds == {"integer"}
         } - self._macro_names
+        self._dimension_names = self._integer_names
         self._string_names = (
             {name for name, kinds in categories.items() if kinds == {"string"}}
             - self._macro_names
@@ -298,6 +337,70 @@ class StudyBuilder(Builder):
             return name + (" не конечна?" if negative else " конечна?")
         return super().cond_text(node, missing)
 
+    def _plain_new(self, value: Any) -> bool:
+        if value is None or value.type != "new_expression":
+            return False
+        if (
+            value.child_by_field_name("placement") is not None
+            or value.child_by_field_name("arguments") is not None
+        ):
+            return False
+        typ = value.child_by_field_name("type")
+        if typ is None or typ.type not in {"primitive_type", "sized_type_specifier"}:
+            return False
+        declarator = value.child_by_field_name("declarator")
+        if declarator is None:
+            return False
+        return all(
+            child.type in {"new_declarator", "identifier", "number_literal"}
+            and (child.type != "identifier" or self.raw(child) in self._dimension_names)
+            for child in self._descendants(declarator)
+        )
+
+    @staticmethod
+    def _descendants(node: Any) -> list[Any]:
+        result = []
+        stack = [node]
+        while stack:
+            child = stack.pop()
+            result.append(child)
+            stack.extend(child.named_children)
+        return result
+
+    def _numeric_target(self, node: Any) -> bool:
+        if node is None:
+            return False
+        if node.type == "identifier":
+            return self.raw(node) in self._scalar_names
+        if node.type != "subscript_expression":
+            return False
+        current = node
+        rank = 0
+        while current.type == "subscript_expression":
+            rank += 1
+            indices = current.child_by_field_name("indices")
+            if indices is None or not all(
+                part.type
+                in {
+                    "subscript_argument_list",
+                    "identifier",
+                    "number_literal",
+                    "binary_expression",
+                }
+                and (
+                    part.type != "binary_expression"
+                    or self.op_of(part) in {"+", "-", "*", "/", "%"}
+                )
+                and (part.type != "identifier" or self.raw(part) in self._integer_names)
+                for part in self._descendants(indices)
+            ):
+                return False
+            current = current.child_by_field_name("argument")
+        return (
+            self.raw(current) in self._array_names
+            and self._array_ranks[self.raw(current)] == rank
+        )
+
     def _declaration(self, node: Any) -> list[object] | None:
         typ = node.child_by_field_name("type")
         if self.raw(typ) in self._macro_names:
@@ -338,6 +441,12 @@ class StudyBuilder(Builder):
                 return None
             target = decl.child_by_field_name("declarator")
             value = decl.child_by_field_name("value")
+            if (
+                target is not None
+                and target.type == "pointer_declarator"
+                and self._plain_new(value)
+            ):
+                continue
             if (
                 target is None
                 or target.type not in {"identifier", "array_declarator"}
@@ -431,6 +540,41 @@ class StudyBuilder(Builder):
                 return M.Simple(
                     M.PROCESS, "; ".join(item.text for item in declarations)
                 )
+        if node.type == "assignment_expression" and self.op_of(node) in {
+            "+=",
+            "-=",
+            "*=",
+            "/=",
+            "%=",
+        }:
+            target, value = self.sides(node)
+            if self._numeric_target(target) and all(
+                part.type
+                in {
+                    "identifier",
+                    "number_literal",
+                    "binary_expression",
+                    "unary_expression",
+                    "parenthesized_expression",
+                }
+                and (
+                    part.type != "unary_expression"
+                    or self.op_of(part) in {"+", "-", "~"}
+                )
+                and (part.type != "identifier" or self.raw(part) in self._scalar_names)
+                for part in self._descendants(value)
+            ):
+                name = self.t(target)
+                operator = self.op_of(node)[:-1]
+                right = self.t(value)
+                if value.type in {
+                    "binary_expression",
+                    "assignment_expression",
+                    "conditional_expression",
+                    "comma_expression",
+                }:
+                    right = "(" + right + ")"
+                return M.Simple(M.PROCESS, f"{name} = {name} {operator} {right}")
         if node.type == "update_expression":
             arg = node.child_by_field_name("argument")
             op = self.op_of(node)
@@ -448,6 +592,8 @@ class StudyBuilder(Builder):
 
     def _stream_parts(self, node: Any) -> tuple[str, list[Any]] | None:
         node = self._unwrap(node)
+        if node is None:
+            return None
         op = self.op_of(node)
         if op not in {"<<", ">>"}:
             return None
@@ -487,10 +633,10 @@ class StudyBuilder(Builder):
         ]
         if not literals:
             return True
-        return (
-            len(literals) == 1
-            and literals[0].endswith((":", "="))
-            and not literals[0].startswith("Ошибка")
+        labels = [label for label in literals if label.strip(" ,;|\t\r\n")]
+        return len(labels) <= 1 and (
+            not labels
+            or (labels[0].endswith((":", "=")) and not labels[0].startswith("Ошибка"))
         )
 
     def try_io(self, node: Any) -> M.Simple | None:
@@ -594,7 +740,14 @@ class StudyBuilder(Builder):
     def k_expression(self, n: Any, r: dict) -> list[object]:
         expr = self._expr(n)
         update = self._unwrap(expr)
-        if update is not None and update.type == "update_expression":
+        if (
+            update is not None
+            and update.type in {"update_expression", "assignment_expression"}
+            and (
+                update.type == "update_expression"
+                or self.op_of(update) in {"+=", "-=", "*=", "/=", "%="}
+            )
+        ):
             return [self._simple_from_node(update)]
         if self._console_setup(expr):
             return []
@@ -607,7 +760,7 @@ class StudyBuilder(Builder):
             if (
                 len(args) == 1
                 and args[0].type == "string_literal"
-                and self.raw(args[0]) == '"pause"'
+                and self.raw(args[0]).lower() in {'"pause"', '"pause > nul"'}
             ):
                 return []
         if expr is not None:
@@ -671,7 +824,9 @@ class StudyBuilder(Builder):
             return None
         return self.call_args(call)
 
-    def _retry_input(self, node: Any) -> tuple[str, str] | None:
+    def _retry_input(
+        self, node: Any, check_uses: bool = True
+    ) -> tuple[str, str] | None:
         condition = node.child_by_field_name("condition")
         if self._unwrap(condition).type != "true" or len(self.named(condition)) != 1:
             return None
@@ -710,13 +865,82 @@ class StudyBuilder(Builder):
             or self.raw(ignore[1]) != "'\\n'"
         ):
             return None
-        # При внешнем использовании потока сохраняем детали его состояния.
-        if any(
-            use.start_byte < node.start_byte or use.end_byte > node.end_byte
-            for use in self._cin_uses
-        ):
+        # Обычные независимые чтения не наблюдают состояние предыдущей попытки.
+        for use in self._cin_uses if check_uses else []:
+            if node.start_byte <= use.start_byte < node.end_byte:
+                continue
+            parent = use.parent
+            if (
+                parent is not None
+                and parent.type == "binary_expression"
+                and self.op_of(parent) == ">>"
+            ):
+                continue
+            while parent is not None and parent.type != "while_statement":
+                parent = parent.parent
+            if parent is not None and self._retry_input(parent, check_uses=False):
+                continue
             return None
         return self.t(read[1][0]), message
+
+    def _storage_loop(self, node: Any) -> bool:
+        if node.type != "for_statement":
+            return False
+        initializer = node.child_by_field_name("initializer")
+        if initializer is None or initializer.type != "declaration":
+            return False
+        declarations = initializer.children_by_field_name("declarator")
+        if len(declarations) != 1 or declarations[0].type != "init_declarator":
+            return False
+        index = declarations[0].child_by_field_name("declarator")
+        if (
+            index is None
+            or index.type != "identifier"
+            or self.raw(declarations[0].child_by_field_name("value")) != "0"
+        ):
+            return False
+        condition = self._unwrap(node.child_by_field_name("condition"))
+        if condition is None:
+            return False
+        left, bound = self.sides(condition)
+        if (
+            self.op_of(condition) != "<"
+            or self.raw(left) != self.raw(index)
+            or bound.type not in {"identifier", "number_literal"}
+        ):
+            return False
+        update = node.child_by_field_name("update")
+        if (
+            update is None
+            or update.type != "update_expression"
+            or self.op_of(update) != "++"
+            or self.raw(update.child_by_field_name("argument")) != self.raw(index)
+        ):
+            return False
+        statements = self._statements(node.child_by_field_name("body"))
+        if len(statements) != 1:
+            return False
+        expression = self._expr(statements[0])
+        if (
+            expression is None
+            or expression.type != "assignment_expression"
+            or self.op_of(expression) != "="
+        ):
+            return False
+        target, value = self.sides(expression)
+        if target.type != "subscript_expression" or not self._plain_new(value):
+            return False
+        array = target.child_by_field_name("argument")
+        indices = target.child_by_field_name("indices")
+        return (
+            self._array_ranks.get(self.raw(array)) == 2
+            and self.raw(indices) == "[" + self.raw(index) + "]"
+        )
+
+    def k_for(self, n: Any, r: dict) -> list[object]:
+        if self._storage_loop(n):
+            return []
+        return super().k_for(n, r)
 
     def k_while(self, n: Any, r: dict) -> list[object]:
         retry = self._retry_input(n)
@@ -759,6 +983,12 @@ class StudyBuilder(Builder):
             .strip()
             .lower()
             .startswith(("введите", "enter", "input"))
+            or (
+                bool(literals)
+                and all(self._string_value(p) is not None for p in visible)
+                and "".join(literals).strip().lower().startswith("внимание")
+                and "ввод" in "".join(literals).lower()
+            )
         )
 
     def _read(self, node: Any, stream: str) -> str | None:
@@ -959,6 +1189,40 @@ class StudyBuilder(Builder):
                 branch.then_, branch.else_ = branch.else_ or M.Seq(), branch.then_
         return result
 
+    def _terminal_housekeeping(self, nodes: list[Any], index: int) -> bool:
+        if index + 1 >= len(nodes):
+            return False
+        label = self._static_stream_output(nodes[index])
+        if label is None:
+            return False
+        tail = nodes[index + 2 :]
+        if any(n.type != "return_statement" for n in tail):
+            return False
+        follow = self._expr(nodes[index + 1])
+        if follow is None or follow.type != "call_expression":
+            return False
+        function = follow.child_by_field_name("function")
+        args = self.call_args(follow)
+        lower = label.strip().lower()
+        if (
+            self._name(function, "system")
+            and len(args) == 1
+            and self.raw(args[0]).lower() in {'"pause"', '"pause > nul"'}
+        ):
+            return lower.startswith(("нажмите", "press"))
+        ignore = self._cin_call(nodes[index + 1], "ignore")
+        return (
+            lower.startswith(("введите enter", "press enter"))
+            and ignore is not None
+            and len(ignore) == 2
+            and self.raw(ignore[1]) == "'\\n'"
+            and "".join(self.raw(ignore[0]).split())
+            in {
+                "numeric_limits<streamsize>::max()",
+                "std::numeric_limits<std::streamsize>::max()",
+            }
+        )
+
     def k_block(self, n: Any, r: dict) -> list[object]:
         from .input_study import collect_input_groups
 
@@ -1082,6 +1346,9 @@ class StudyBuilder(Builder):
                 if stream and stream[0] == M.INPUT:
                     index += 1
                     continue
+            if self._terminal_housekeeping(nodes, index):
+                index += 2
+                continue
             statements = self.stmt(node)
             stream = (
                 self._stream_parts(self._expr(node))
