@@ -32,6 +32,42 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_continue_after_output_leaves_bottom_vertically(self) -> None:
+        for study in (False, True):
+            for loop_kind in ("while", "do", "for"):
+                with self.subTest(study=study, loop=loop_kind):
+                    retry = M.Seq(
+                        [M.Simple(M.OUTPUT, "Ошибка ввода"), M.Jump("continue")]
+                    )
+                    body = M.Seq(
+                        [
+                            M.Simple(M.INPUT, "Ввод символа"),
+                            *[M.Simple(M.PROCESS, f"шаг {i}") for i in range(12)],
+                            M.If("пустая строка?", retry) if study else retry,
+                        ]
+                    )
+                    loop = (
+                        M.While("true", body)
+                        if loop_kind == "while"
+                        else M.DoWhile("ещё?", body)
+                        if loop_kind == "do"
+                        else M.ForLoop(
+                            body,
+                            init=M.Simple(M.PROCESS, "i = 0"),
+                            cond="i < 5",
+                            update=M.Simple(M.PROCESS, "i = i + 1"),
+                        )
+                    )
+                    opts = options(study=study)
+                    frame = layout(loop, opts)
+                    self.assertEqual(validate_geometry(frame), [])
+                    self.assertEqual(validate_ports(frame), [])
+                    pages = split_pages(frame, opts)
+                    self.assertGreater(len(pages), 1)
+                    for page in pages:
+                        self.assertEqual(validate_geometry(page), [])
+                        self.assertEqual(validate_ports(page), [])
+
     def test_loop_entry_has_one_vertical_arrow_and_keeps_return_arrow(self) -> None:
         from blockwright.geometry import junction_arrows
 

@@ -327,7 +327,13 @@ def layout_seq(items, opts):
     y = 0.0
     prev = None
     for f in frames:
-        if prev is not None and not f.shapes and not f.entry_shape:
+        # Переход покидает нижний порт вниз и лишь затем уходит в боковой канал.
+        if (
+            prev is not None
+            and not f.shapes
+            and not f.entry_shape
+            and not any(p["kind"] in {"break", "continue"} for p in f.pend)
+        ):
             y = prev.exit[1] if prev.exit is not None else y - V_GAP
         f.shift(spine - f.spine, y)
         if prev is not None and prev.exit is not None:
