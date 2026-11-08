@@ -66,7 +66,6 @@ def make_shape(kind, text, opts):
         "w": round(w, 2),
         "h": round(h, 2),
         "lines": lines,
-        "notation": getattr(opts, "notation", "course"),
     }
 
 

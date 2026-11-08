@@ -131,7 +131,6 @@ def split_pages(frame: Frame, opts: Any) -> list[Frame]:
                             "lines": [label],
                             "text": label,
                             "page_target": target + 1,
-                            "notation": "course",
                             "flow": "down" if down else "up",
                         }
                     )

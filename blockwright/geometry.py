@@ -139,27 +139,17 @@ def document_bottom(w: float, h: float, t: float) -> Point:
 def shape_port(shape: Shape, side: str) -> Point:
     x, y, w, h = (float(shape[k]) for k in ("x", "y", "w", "h"))
     if side == "bottom":
-        if shape["kind"] == "output" and shape.get("notation", "course") == "course":
+        if shape["kind"] == "output":
             px, py = document_bottom(w, h, 0.5)
             return x + px, y + py
         return x + w / 2, y + h
     if side == "top":
         return x + w / 2, y
     if side == "left":
-        inset = (
-            min(h * 0.34, w * 0.3) / 2
-            if shape["kind"] in ("io", "input")
-            or (shape["kind"] == "output" and shape.get("notation") == "gost")
-            else 0
-        )
+        inset = min(h * 0.34, w * 0.3) / 2 if shape["kind"] in ("io", "input") else 0
         return x + inset, y + h / 2
     if side == "right":
-        inset = (
-            min(h * 0.34, w * 0.3) / 2
-            if shape["kind"] in ("io", "input")
-            or (shape["kind"] == "output" and shape.get("notation") == "gost")
-            else 0
-        )
+        inset = min(h * 0.34, w * 0.3) / 2 if shape["kind"] in ("io", "input") else 0
         return x + w - inset, y + h / 2
     raise ValueError(f"Неизвестный порт: {side}")
 

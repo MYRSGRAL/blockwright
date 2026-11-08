@@ -369,7 +369,7 @@ function textWidth(text,size){
   textContext.font=size+'px '+MONO;
   return textContext.measureText(text).width;
 }
-function sizeFor(kind,text,maxChars,notation){
+function sizeFor(kind,text,maxChars){
   const lines=wrap(text,maxChars);
   const tw=Math.max(...lines.map(l=>textWidth(l,FS))), th=lines.length*LH;
   let w,h;
@@ -400,10 +400,10 @@ function flowPorts(s,outgoing){
   return outgoing?(s.kind==='decision'?['bottom','right']:['bottom']):['top'];
 }
 function contourPorts(s){
-  const isData=s.kind==='io'||s.kind==='input'||(s.kind==='output'&&s.notation==='gost');
+  const isData=s.kind==='io'||s.kind==='input';
   const inset=isData?Math.min(s.h*.34,s.w*.3)/2:0;
   return {top:[s.x+s.w/2,s.y],
-    bottom:[s.x+s.w/2,s.y+s.h*((s.kind==='output'&&(s.notation||'course')==='course')?.9425:1)],
+    bottom:[s.x+s.w/2,s.y+s.h*(s.kind==='output'?.9425:1)],
     left:[s.x+inset,s.y+s.h/2],right:[s.x+s.w-inset,s.y+s.h/2]};
 }
 
@@ -426,7 +426,7 @@ function outline(s){
   const st=`fill="${TH().fill[k]||TH().bg}" stroke="${TH().stroke}" stroke-width="1.6"`;
   if(k==='terminator')return[`<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" rx="${n(h/2)}" ry="${n(h/2)}" ${st}/>`];
   if(k==='decision')return[`<polygon points="${n(x+w/2)},${n(y)} ${n(x+w)},${n(y+h/2)} ${n(x+w/2)},${n(y+h)} ${n(x)},${n(y+h/2)}" ${st}/>`];
-  if(k==='output'&&(s.notation||'course')==='course')return[`<path d="M${n(x)},${n(y)} L${n(x+w)},${n(y)} L${n(x+w)},${n(y+.8*h)} C${n(x+2*w/3)},${n(y+.78*h)} ${n(x+w/3)},${n(y+1.16*h)} ${n(x)},${n(y+.92*h)} Z" ${st}/>`];
+  if(k==='output')return[`<path d="M${n(x)},${n(y)} L${n(x+w)},${n(y)} L${n(x+w)},${n(y+.8*h)} C${n(x+2*w/3)},${n(y+.78*h)} ${n(x+w/3)},${n(y+1.16*h)} ${n(x)},${n(y+.92*h)} Z" ${st}/>`];
   if(k==='io'||k==='input'||k==='output'){const s2=Math.min(h*.34,w*.3);
     return[`<polygon points="${n(x+s2)},${n(y)} ${n(x+w)},${n(y)} ${n(x+w-s2)},${n(y+h)} ${n(x)},${n(y+h)}" ${st}/>`];}
   if(k==='preparation'){const c=Math.min(h*.5,w*.25);
@@ -439,7 +439,7 @@ function outline(s){
 }
 function shapeText(s,maxChars){
   const lines=s.lines||wrap(s.text,maxChars);
-  const cx=s.x+s.w/2, cy=s.y+s.h*((s.kind==='output'&&(s.notation||'course')==='course')?.43:.5), y0=cy-(lines.length-1)*LH/2+FS*.36;
+  const cx=s.x+s.w/2, cy=s.y+s.h*(s.kind==='output'?.43:.5), y0=cy-(lines.length-1)*LH/2+FS*.36;
   return lines.map((ln,i)=>`<text x="${n(cx)}" y="${n(y0+i*LH)}" text-anchor="middle" font-family="${MONO}" font-size="${FS}" fill="${TH().ink}">${esc(ln)}</text>`);
 }
 function cleanPts(pts){
@@ -567,8 +567,34 @@ function anchorPt(m,ref){
 function hydrate(m){
   m.maxChars=m.maxChars||38;
   m.shapes=m.shapes||[];m.edges=m.edges||[];m.labels=m.labels||[];
-  m.notation=m.notation||'course';
-  for(const s of m.shapes){if(!s.id)s.id=uid('s');s.notation=s.notation||m.notation;}
+  // Старые проекты хранят точки на параллелограмме: переносим их до поиска привязок.
+  const moved=new Map(), legacy=new Map(), key=p=>p.map(r2).join(',');
+  for(const s of m.shapes){
+    if(!s.id)s.id=uid('s');
+    if(s.kind==='output'&&(s.notation||m.notation)==='gost'){
+      const inset=Math.min(s.h*.34,s.w*.3)/2;
+      const old={bottom:[s.x+s.w/2,s.y+s.h],
+        left:[s.x+inset,s.y+s.h/2],right:[s.x+s.w-inset,s.y+s.h/2]};
+      const current=anchors(s);legacy.set(s.id,{old,current});
+      for(const port of Object.keys(old))
+        moved.set(key(old[port]),{point:current[port].map(r2),ref:{id:s.id,port}});
+    }
+  }
+  for(const e of m.edges){
+    for(const [index,side] of [[0,'from'],[e.points.length-1,'to']]){
+      const change=moved.get(key(e.points[index]));
+      if(change){e.points[index]=change.point.slice();e[side]={...change.ref};}
+    }
+  }
+  for(const l of m.labels){
+    const change=l.near&&legacy.get(l.near.id), port=l.near&&l.near.port;
+    if(change&&change.old[port]){
+      l.x=r2(l.x+change.current[port][0]-change.old[port][0]);
+      l.y=r2(l.y+change.current[port][1]-change.old[port][1]);
+    }
+  }
+  delete m.notation;
+  for(const s of m.shapes)delete s.notation;
   for(const l of m.labels){
     if(!l.id)l.id=uid('l');
     if(l.near===undefined)l.near=nearestAnchor(m,l);
@@ -1021,7 +1047,7 @@ function shiftBelow(m,threshold,delta){
 }
 function newShape(kind,x,y,text,maxChars){
   const g=sizeFor(kind,text,maxChars||38);
-  return{id:uid('s'),kind,text,notation:'course',lines:g.lines,x:r2(x-g.w/2),y:r2(y-g.h/2),w:g.w,h:g.h};
+  return{id:uid('s'),kind,text,lines:g.lines,x:r2(x-g.w/2),y:r2(y-g.h/2),w:g.w,h:g.h};
 }
 function emptyDoc(name){
   const m={name,rel:'мои схемы',signature:'',line:0,maxChars:38,
@@ -1049,7 +1075,10 @@ function loadStore(){
     const raw=JSON.parse(saved||'{}');
     // Старое хранилище сохраняем; из него переносим только настройки интерфейса.
     const legacy=saved?{}:JSON.parse(localStorage.getItem('blockwright.cpp.v1')||'{}');
-    docs=raw.docs||{}; custom=raw.custom||[]; dirty=new Set(raw.dirty||[]);
+    docs=raw.docs||{};
+    for(const m of Object.values(docs))
+      if(m.notation==='gost'||(m.shapes||[]).some(s=>s.notation==='gost'))hydrate(m);
+    custom=raw.custom||[]; dirty=new Set(raw.dirty||[]);
     names=raw.names||{};
     LANG=raw.lang||legacy.lang||DATA.lang||LANG;
     THEME=raw.theme||legacy.theme||DATA.theme||THEME;
@@ -1217,7 +1246,6 @@ function onDown(ev){
     push(); const kind=tool.slice(4);
     const s=newShape(kind,snap(p[0],ev.altKey),snap(p[1],ev.altKey),
                      kind==='decision'?'условие':'действие',m.maxChars);
-    s.notation=m.notation||'course';
     m.shapes.push(s); selectOnly('shapes',s.id); setTool('select'); commit(); return;
   }
   if(tool==='label'){
@@ -1446,7 +1474,7 @@ function nudge(dx,dy){
 }
 function fitShape(id){
   const m=model(), s=m.shapes.find(x=>x.id===id); if(!s)return;
-  const g=sizeFor(s.kind,s.text,m.maxChars,s.notation);
+  const g=sizeFor(s.kind,s.text,m.maxChars);
   s.lines=g.lines;
   const cx=s.x+s.w/2;
   s.x=r2(cx-g.w/2); s.w=g.w; s.h=g.h; syncEdges(m,[s.id]);
@@ -1695,6 +1723,8 @@ function importProject(file){
   const rd=new FileReader();
   rd.onload=()=>{try{
       const d=JSON.parse(rd.result);
+      for(const m of Object.values(d.docs||{}))
+        if(m.notation==='gost'||(m.shapes||[]).some(s=>s.notation==='gost'))hydrate(m);
       docs=Object.assign(docs,d.docs||{});
       const have=new Set(custom.map(c=>c.anchor));
       for(const c of (d.custom||[]))if(!have.has(c.anchor))custom.push(c);

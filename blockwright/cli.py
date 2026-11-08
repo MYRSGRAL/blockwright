@@ -37,7 +37,6 @@ class Opts:
     plain_begin: bool = False
     study: bool = True
     checks: str = "hide"
-    notation: str = "course"
     page_height: float = 926.0
     page_width: float = 605.0
 
@@ -130,8 +129,8 @@ def build_parser():
     ap = argparse.ArgumentParser(
         prog="blockwright",
         description="Компактные чёрно-белые блок-схемы учебных программ C++. "
-        "Разбор кода выполняется tree-sitter; обозначения — по ГОСТ "
-        "19.701-90 или методичке с волнистым выводом.",
+        "Разбор кода выполняется tree-sitter; обозначения — по методичке "
+        "с волнистым выводом.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Примеры:\n"
         '  python -m blockwright "Лабораторная работа №1"\n'
@@ -214,13 +213,6 @@ def build_parser():
         choices=["hide", "show"],
         default="hide",
         help="hide — убрать распознанные служебные проверки; show — показать ветки ошибок",
-    )
-    ap.add_argument(
-        "--notation",
-        choices=["course", "gost"],
-        default="course",
-        help="course — вывод с волной по методичке; gost — ввод и вывод "
-        "параллелограммами для схем программ ГОСТ 19.701-90",
     )
     ap.add_argument(
         "--page-height",
@@ -514,7 +506,6 @@ def main(argv=None):
         default_label=words["default"],
         study=args.detail == "study",
         checks=args.checks,
-        notation=args.notation,
         page_height=args.page_height,
         page_width=args.page_width,
     )

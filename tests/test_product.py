@@ -1,7 +1,10 @@
 """Пользовательские настройки и ограничения учебного C++-форка."""
 
+import contextlib
+import io
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from blockwright import vendored
@@ -92,11 +95,19 @@ class Product(unittest.TestCase):
         self.assertTrue(opts.study)
         self.assertEqual(opts.checks, "hide")
         self.assertEqual(build_parser().parse_args(["--checks", "show"]).checks, "show")
-        self.assertEqual(opts.notation, "course")
+        self.assertFalse(hasattr(opts, "notation"))
         self.assertEqual(opts.for_style, "decision")
-        args = build_parser().parse_args(["--detail", "full", "--notation", "gost"])
+        args = build_parser().parse_args(["--detail", "full"])
         self.assertEqual(args.detail, "full")
-        self.assertEqual(args.notation, "gost")
+
+    def test_removed_notation_flag_is_rejected(self) -> None:
+        parser = build_parser()
+        self.assertNotIn("--notation", parser.format_help())
+        for mode in ("gost", "course"):
+            with self.subTest(mode=mode), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    parser.parse_args(["--notation", mode])
+                self.assertEqual(error.exception.code, 2)
 
     def test_syntax_error_is_reported_without_partial_chart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,8 +133,6 @@ class Product(unittest.TestCase):
                     "--no-ui",
                     "--detail",
                     "study",
-                    "--notation",
-                    "course",
                     "-q",
                 ]
             )
@@ -131,6 +140,16 @@ class Product(unittest.TestCase):
             svg = next(out.glob("*.svg")).read_text(encoding="utf-8")
             self.assertNotIn("#fff6e5", svg)
             self.assertIn("Вывод", svg)
+            ns = {"s": "http://www.w3.org/2000/svg"}
+            groups = [
+                group
+                for group in ET.fromstring(svg).iterfind(".//s:g", ns)
+                if "_Вывод_" in group.get("id", "")
+            ]
+            self.assertEqual(len(groups), 1)
+            outline = groups[0].find("s:path", ns)
+            self.assertIsNotNone(outline)
+            self.assertIn(" C", outline.get("d", ""))
 
 
 if __name__ == "__main__":

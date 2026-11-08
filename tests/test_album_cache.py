@@ -61,6 +61,22 @@ class SavedCharts(unittest.TestCase):
         result = self.load({"blockwright.cpp.v2.current": json.dumps({"docs": docs})})
         self.assertEqual(result["docs"], docs)
 
+    def test_cached_gost_edges_follow_wave_after_restoring(self) -> None:
+        model = {
+            "notation": "gost",
+            "shapes": [
+                {"id": "out", "kind": "output", "x": 0, "y": 0, "w": 200, "h": 80}
+            ],
+            "edges": [{"points": [[100, 80], [100, 150]]}],
+        }
+        result = self.load(
+            {"blockwright.cpp.v2.current": json.dumps({"docs": {"main": model}})}
+        )
+        restored = result["docs"]["main"]
+        self.assertNotIn("notation", restored)
+        self.assertEqual(restored["edges"][0]["points"][0], [100, 75.4])
+        self.assertEqual(restored["edges"][0]["from"], {"id": "out", "port": "bottom"})
+
 
 if __name__ == "__main__":
     unittest.main()

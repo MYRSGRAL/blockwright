@@ -38,8 +38,13 @@ process.stdout.write(JSON.stringify(m.edges[0].from.port));
         )
         self.assertEqual(json.loads(result.stdout), "bottom")
 
-    def evaluate(self, expression: str) -> object:
-        core = JS_CORE.split("/* ---------- model: attachments")[0]
+    def evaluate(self, expression: str, *, model: bool = False) -> object:
+        marker = (
+            "/* ---------- state ----------"
+            if model
+            else "/* ---------- model: attachments"
+        )
+        core = JS_CORE.split(marker)[0]
         script = core + "\nprocess.stdout.write(JSON.stringify(" + expression + "));"
         result = subprocess.run(
             ["node"], input=script, encoding="utf-8", capture_output=True, check=True
@@ -57,11 +62,17 @@ process.stdout.write(JSON.stringify(m.edges[0].from.port));
         )
         self.assertEqual(point, [110, 95.4])
 
-    def test_gost_output_is_data_symbol(self) -> None:
+    def test_legacy_gost_output_uses_wave_and_matching_ports(self) -> None:
         result = self.evaluate(
             "outline({kind:'output',notation:'gost',x:0,y:0,w:200,h:80})"
         )
-        self.assertIn("<polygon", result[0])
+        self.assertIn(" C", result[0])
+        ports = self.evaluate(
+            "contourPorts({kind:'output',notation:'gost',x:0,y:0,w:200,h:80})"
+        )
+        self.assertEqual(ports["bottom"], [100, 75.4])
+        self.assertEqual(ports["left"], [0, 40])
+        self.assertEqual(ports["right"], [200, 40])
 
     def test_dark_interface_does_not_change_print_colors(self) -> None:
         result = self.evaluate(
@@ -69,6 +80,26 @@ process.stdout.write(JSON.stringify(m.edges[0].from.port));
         )
         self.assertIn('fill="#ffffff"', result[0])
         self.assertIn('stroke="#000000"', result[0])
+
+    def test_legacy_project_moves_output_edge_to_wave_on_load(self) -> None:
+        for attached in (False, True):
+            with self.subTest(attached=attached):
+                reference = ",from:{id:'a',port:'bottom'}" if attached else ""
+                result = self.evaluate(
+                    """(()=>{
+const m=hydrate({notation:'gost',shapes:[
+ {id:'a',kind:'output',x:0,y:0,w:200,h:80},
+ {id:'b',kind:'process',x:0,y:150,w:200,h:80}],edges:[
+ {points:[[100,80],[100,150]]REFERENCE}]});
+const before=m.edges[0].points[0].slice(), from=m.edges[0].from;
+m.shapes[0].x+=40;syncEdges(m,['a']);
+return {before,from,after:m.edges[0].points[0]};
+})()""".replace("REFERENCE", reference),
+                    model=True,
+                )
+                self.assertEqual(result["before"], [100, 75.4])
+                self.assertEqual(result["from"], {"id": "a", "port": "bottom"})
+                self.assertEqual(result["after"], [140, 75.4])
 
     def test_user_text_is_escaped(self) -> None:
         result = self.evaluate(

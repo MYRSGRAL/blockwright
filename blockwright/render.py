@@ -121,7 +121,7 @@ def shape_outline(s):
     if k == M.DECISION:
         pts = f"{n(x + w / 2)},{n(y)} {n(x + w)},{n(y + h / 2)} {n(x + w / 2)},{n(y + h)} {n(x)},{n(y + h / 2)}"
         return [f'<polygon points="{pts}" {st}/>']
-    if k == "output" and s.get("notation", "course") == "course":
+    if k == "output":
         return [
             (
                 f'<path d="M{n(x)},{n(y)} L{n(x + w)},{n(y)} L{n(x + w)},{n(y + 0.8 * h)} '
@@ -156,7 +156,7 @@ def shape_outline(s):
 
 def shape_text(s):
     cx, cy = s["x"] + s["w"] / 2, s["y"] + s["h"] / 2
-    if s["kind"] == M.OUTPUT and s.get("notation", "course") == "course":
+    if s["kind"] == M.OUTPUT:
         cy = s["y"] + 0.43 * s["h"]
     lines = s["lines"]
     y0 = cy - (len(lines) - 1) * LINE_H / 2 + FONT_SIZE * 0.36
@@ -328,7 +328,6 @@ def frame_to_dict(frame, opts):
                 "w": round(s["w"], 2),
                 "h": round(s["h"], 2),
                 "text": s.get("text", ""),
-                "notation": s.get("notation", "course"),
                 **({"role": s["role"]} if "role" in s else {}),
                 **({"flow": s["flow"]} if "flow" in s else {}),
                 "lines": list(s.get("lines", [])),
@@ -356,7 +355,6 @@ def frame_to_dict(frame, opts):
         "page_number": frame.page_number,
         "page_count": frame.page_count,
         "maxChars": opts.max_chars,
-        "notation": getattr(opts, "notation", "course"),
     }
 
 

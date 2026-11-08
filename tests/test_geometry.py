@@ -19,7 +19,6 @@ def options(**changes: object) -> SimpleNamespace:
     values = {
         "max_chars": 30,
         "study": True,
-        "notation": "course",
         "yes_label": "Да",
         "no_label": "Нет",
         "begin_label": "Начало",
@@ -263,8 +262,15 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(y, document_bottom(shape["w"], shape["h"], 0.5)[1])
         self.assertNotEqual(y, shape["h"])
         self.assertIn(" C", "".join(shape_outline(shape)))
-        gost = make_shape("output", "Вывод", options(notation="gost"))
-        self.assertIn("polygon", "".join(shape_outline(gost)))
+        gost = make_shape("output", "Вывод", options())
+        gost["notation"] = "gost"
+        self.assertIn(" C", "".join(shape_outline(gost)))
+        self.assertAlmostEqual(
+            shape_port(gost, "bottom")[1],
+            document_bottom(gost["w"], gost["h"], 0.5)[1],
+        )
+        self.assertEqual(shape_port(gost, "left"), (0, gost["h"] / 2))
+        self.assertEqual(shape_port(gost, "right"), (gost["w"], gost["h"] / 2))
 
     def test_decision_ports_are_down_and_right(self) -> None:
         frame = layout(M.If("условие?", M.Simple(M.PROCESS, "работа")), options())
