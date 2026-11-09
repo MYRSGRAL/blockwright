@@ -238,7 +238,6 @@ class InputGroups(unittest.TestCase):
             ),
             DIRECT_CODE.replace("return 1;", "record();return 1;"),
             DIRECT_CODE.replace("int a[100];", "Array a;"),
-            DIRECT_CODE.replace("int n;", "Number n;"),
             "#define cin custom_stream\n" + DIRECT_CODE,
         ]
         for code in cases:
@@ -255,6 +254,18 @@ class InputGroups(unittest.TestCase):
                         for item in walk(body)
                     )
                 )
+
+    def test_unknown_loop_bound_keeps_loop_with_local_element_input(self) -> None:
+        body = build(DIRECT_CODE.replace("int n;", "Number n;"))
+        self.assertNotIn(M.Simple(M.INPUT, "Ввод a[n]"), body.items)
+        self.assertTrue(
+            any(
+                isinstance(item, M.ForLoop)
+                and item.cond == "i < n"
+                and M.Simple(M.INPUT, "Ввод a[i]") in list(walk(item.body))
+                for item in walk(body)
+            )
+        )
 
     def test_direct_external_index_is_not_removed_when_live(self) -> None:
         body = build(

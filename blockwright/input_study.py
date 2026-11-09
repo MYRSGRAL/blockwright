@@ -622,7 +622,9 @@ class _Recognizer:
         for atom in atoms:
             targets = self.failed_targets(atom, stream) if reading else []
             if targets:
-                if scratch or not all(self.scalar(target) for target in targets):
+                if scratch or not all(
+                    self.b._numeric_target(target) for target in targets
+                ):
                     return None
                 for target in targets:
                     name = self.b.raw(target)
@@ -649,6 +651,11 @@ class _Recognizer:
 
     def validation_atoms(self, atoms: list[Any], names: set[str]) -> bool:
         for atom in atoms:
+            atom = self.b._unwrap(atom)
+            if self.b.op_of(atom) in {"&&", "||"}:
+                if not self.validation_atoms(list(self.b.sides(atom)), names):
+                    return False
+                continue
             if self.cin_failed(atom):
                 continue
             if any(self.b._finite(atom) == (name, True) for name in names):
@@ -814,7 +821,7 @@ class _Recognizer:
                 stream is None
                 or stream[0] != M.INPUT
                 or not stream[1]
-                or not all(self.scalar(target) for target in stream[1])
+                or not all(self.b._numeric_target(target) for target in stream[1])
             ):
                 return self.direct_array(position)
             names = [self.b.raw(target) for target in stream[1]]
@@ -1743,7 +1750,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             or recognizer.direct(position)
             or recognizer.text_candidate(position)
             if main_block
-            else None
+            else recognizer.direct(position)
         )
         if group is None:
             continue
