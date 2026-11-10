@@ -52,6 +52,10 @@ class StudyBuilder(Builder):
                     name = self.raw(node.child_by_field_name("name"))
                     self._macro_names.add(name)
                     self._shadowed.add(name)
+                if node.type in {"namespace_definition", "namespace_alias_definition"}:
+                    name = node.child_by_field_name("name")
+                    if name is not None:
+                        self._shadowed.add(self.raw(name))
                 if node.type in {
                     "class_specifier",
                     "struct_specifier",
@@ -415,6 +419,7 @@ class StudyBuilder(Builder):
         if typ is None or not (
             typ.type in {"primitive_type", "sized_type_specifier"}
             or self._name(typ, "string")
+            or (self.raw(typ) == "wchar_t" and "wchar_t" not in self._shadowed)
         ):
             return None
         # volatile может выполнять наблюдаемые чтения/записи даже без вызовов.
@@ -748,6 +753,21 @@ class StudyBuilder(Builder):
             return M.Simple(kind, result.text)
         return result
 
+    def _plain_locale(self, expr: Any) -> bool:
+        if expr is None or expr.type != "call_expression":
+            return False
+        function = expr.child_by_field_name("function")
+        if not self._name(function, "locale"):
+            return False
+        if self.raw(function).startswith("std::") and "std" in self._shadowed:
+            return False
+        args = self.call_args(expr)
+        return not args or (
+            len(args) == 1
+            and args[0].type == "string_literal"
+            and self._string_value(args[0]) == ""
+        )
+
     def _console_setup(self, expr: Any) -> bool:
         """Скрывает только самостоятельную настройку среды с простыми аргументами."""
         if expr is None or expr.type != "call_expression":
@@ -757,6 +777,16 @@ class StudyBuilder(Builder):
             return False
         args = self.call_args(expr)
         name = self.raw(function)
+        if name in {"locale::global", "std::locale::global"}:
+            return (
+                "global" not in self._macro_names
+                and "locale" not in self._macro_names
+                and "std" not in self._shadowed
+                and (name.startswith("std::") or "locale" not in self._shadowed)
+                and name not in self.known
+                and len(args) == 1
+                and self._plain_locale(args[0])
+            )
         if name in {"SetConsoleCP", "SetConsoleOutputCP"}:
             return (
                 name not in self._shadowed
@@ -791,8 +821,25 @@ class StudyBuilder(Builder):
         if function.type == "field_expression":
             owner = function.child_by_field_name("argument")
             field = function.child_by_field_name("field")
+            field_name = self.raw(field)
+            if field_name in self._macro_names:
+                return False
+            if self.raw(owner).startswith("std::") and "std" in self._shadowed:
+                return False
+            if field_name == "imbue":
+                return (
+                    any(self._name(owner, stream) for stream in ("wcin", "wcout"))
+                    and len(args) == 1
+                    and self._plain_locale(args[0])
+                )
+            if field_name == "width":
+                return (
+                    self._name(owner, "wcin")
+                    and len(args) == 1
+                    and args[0].type == "number_literal"
+                )
             return (
-                self.raw(field) == "tie"
+                field_name == "tie"
                 and any(
                     self._name(owner, stream)
                     for stream in ("cin", "cout", "cerr", "clog")

@@ -605,9 +605,112 @@ class _Recognizer:
                 self.cin_failed(condition)
                 and any(position - 1 in positions for positions in reads.values())
                 or self.word_count_guard(condition, position, reads)
+                or self.character_length_guard(condition, position, reads)
             ):
                 hidden.add(position)
         return hidden
+
+    def character_buffer(self, name: str) -> bool:
+        declaration = self.declarations.get(name)
+        if declaration is None or not self.macro_free(declaration[1]):
+            return False
+        node = declaration[1]
+        typ = self.b.raw(node.child_by_field_name("type"))
+        if typ not in {"char", "wchar_t"} or typ in self.b._shadowed:
+            return False
+        if any(
+            self.b.raw(c) in {"volatile", "static", "extern", "thread_local"}
+            for c in node.named_children
+        ):
+            return False
+        return any(
+            d.type == "array_declarator"
+            and self.b.raw(d.child_by_field_name("declarator")) == name
+            for d in node.children_by_field_name("declarator")
+        )
+
+    def character_candidate(self, position: int) -> InputGroup | None:
+        node = self.nodes[position]
+        if node.type == "if_statement":
+            condition = self.condition(node)
+            target = self.failed_read(condition, "") if condition is not None else None
+            if not self.error_exit(node, self.b._scalar_names, numeric_exit=True):
+                return None
+        elif node.type == "expression_statement":
+            target = self.read(self.b._expr(node), "")
+        else:
+            return None
+        if target is None or target.type != "identifier":
+            return None
+        name = self.b.raw(target)
+        if not self.character_buffer(name):
+            return None
+        group = InputGroup(position + 1, "Ввод " + name)
+        self.text_groups[id(group)] = name, position
+        return group
+
+    def character_length_guard(
+        self, condition: Any, end: int, reads: dict[str, list[int]]
+    ) -> bool:
+        if self.b.op_of(condition) not in {"<", "<=", ">", ">=", "==", "!="}:
+            return False
+        left, right = self.b.sides(condition)
+        if self.constant_bound(left):
+            left, right = right, left
+        if not self.scalar(left) or not self.constant_bound(right):
+            return False
+        counter = self.b.raw(left)
+        initialized = self.initialized_zero(counter)
+        if initialized is None or any(
+            p < end for p in self.index_escapes.get(counter, set())
+        ):
+            return False
+        for position in range(initialized + 1, end):
+            loop = self.nodes[position]
+            if loop.type != "while_statement" or not self.macro_free(loop):
+                continue
+            test = self.condition(loop)
+            if test is None or self.b.op_of(test) != "!=":
+                continue
+            array, sentinel = self.b.sides(test)
+            if array is not None and array.type == "char_literal":
+                array, sentinel = sentinel, array
+            if (
+                array is None
+                or array.type != "subscript_expression"
+                or self.b.raw(sentinel) not in {r"'\0'", r"L'\0'"}
+            ):
+                continue
+            name = self.b.raw(array.child_by_field_name("argument"))
+            indices = array.child_by_field_name("indices")
+            if (
+                not self.character_buffer(name)
+                or indices is None
+                or len(indices.named_children) != 1
+                or self.b.raw(indices.named_children[0]) != counter
+            ):
+                continue
+            origins = [
+                read for read in reads.get(name, []) if initialized < read < position
+            ]
+            if not origins or any(p < end for p in self.index_escapes.get(name, set())):
+                continue
+            allowed = {self.declarations[name][0], position, *reads[name]}
+            if any(
+                p < end and p not in allowed for p in self.references.get(name, set())
+            ):
+                continue
+            body = self.b._statements(loop.child_by_field_name("body"))
+            if len(body) != 1 or not self.increment(body[0], counter):
+                continue
+            writes = [
+                write
+                for node in self.nodes[initialized + 1 : end]
+                for write in self.writes(node, counter)
+            ]
+            if writes == [self.b._expr(body[0])]:
+                return True
+        return False
 
     def scalar_check(self, node: Any, stream: str) -> tuple[list[str], str] | None:
         condition = self.condition(node)
@@ -1747,6 +1850,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         group = retry or (
             recognizer.candidate(position)
             or recognizer.ranked_candidate(position)
+            or recognizer.character_candidate(position)
             or recognizer.direct(position)
             or recognizer.text_candidate(position)
             if main_block
@@ -1761,11 +1865,15 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
             if child.type in {"identifier", "type_identifier", "field_identifier"}
         ):
             continue
-        start = (
-            position - 1
-            if position and builder._prompt(nodes[position - 1])
-            else position
-        )
+        start = position
+        while (
+            start
+            and nodes[start - 1].type == "expression_statement"
+            and builder._console_setup(builder._expr(nodes[start - 1]))
+        ):
+            start -= 1
+        if start and builder._prompt(nodes[start - 1]):
+            start -= 1
         candidates[start] = group
     # Не скрываем буфер или служебный символ, если их использует неподтверждённый код.
     while candidates:
