@@ -531,6 +531,25 @@ class StudyBuilder(Builder):
         texts = [statement.text for statement in statements]
         return texts if len("; ".join(texts)) <= _MAX_INITIALIZATION_TEXT else None
 
+    def _short_assignment(self, node: Any) -> list[str] | None:
+        """Соседние простые присваивания сохраняют порядок внутри одного блока."""
+        if node.type != "expression_statement":
+            return None
+        expression = self._unwrap(self._expr(node))
+        if (
+            expression is None
+            or expression.type != "assignment_expression"
+            or self.op_of(expression) != "="
+        ):
+            return None
+        target, value = self.sides(expression)
+        if not self._numeric_target(target) or not (
+            self._numeric_target(value) or self._literal_value(value)
+        ):
+            return None
+        text = f"{self.t(target)} = {self.t(value)}"
+        return [text] if len(text) <= _MAX_INITIALIZATION_TEXT else None
+
     def _simple_from_node(self, node: Any) -> M.Simple | None:
         if node is None:
             return None
@@ -986,10 +1005,34 @@ class StudyBuilder(Builder):
             or (
                 bool(literals)
                 and all(self._string_value(p) is not None for p in visible)
+                and "".join(literals).strip().endswith((":", "?"))
+            )
+            or (
+                bool(literals)
+                and all(self._string_value(p) is not None for p in visible)
                 and "".join(literals).strip().lower().startswith("внимание")
                 and "ввод" in "".join(literals).lower()
             )
         )
+
+    def _loop_starts_with_input(self, node: Any) -> bool:
+        """Приглашение относится и к вводу внутри смешанного цикла обработки."""
+        from .input_study import collect_input_groups
+
+        if node.type != "for_statement" or not self._canonical_for(
+            node.child_by_field_name("initializer"),
+            node.child_by_field_name("condition"),
+            node.child_by_field_name("update"),
+        ):
+            return False
+        body = node.child_by_field_name("body")
+        if body is None or body.type != "compound_statement":
+            return False
+        statements = self._statements(body)
+        if not statements:
+            return False
+        plan = collect_input_groups(self, body, statements)
+        return 0 in plan.groups or self._loop_starts_with_input(statements[0])
 
     def _read(self, node: Any, stream: str) -> str | None:
         node = self._unwrap(node)
@@ -1281,7 +1324,9 @@ class StudyBuilder(Builder):
                     output_values = values
                 index += 1
                 continue
-            initializations = self._literal_initializations(node)
+            initializations = self._literal_initializations(
+                node
+            ) or self._short_assignment(node)
             if initializations:
                 next_index = index + 1
                 while next_index < len(nodes):
@@ -1290,7 +1335,9 @@ class StudyBuilder(Builder):
                         or next_index in input_plan.hidden
                     ):
                         break
-                    following = self._literal_initializations(nodes[next_index])
+                    following = self._literal_initializations(
+                        nodes[next_index]
+                    ) or self._short_assignment(nodes[next_index])
                     if (
                         not following
                         or len(initializations) + len(following) > _MAX_INITIALIZATIONS
@@ -1343,7 +1390,9 @@ class StudyBuilder(Builder):
                 stream = (
                     self._stream_parts(following) if following is not None else None
                 )
-                if stream and stream[0] == M.INPUT:
+                if (stream and stream[0] == M.INPUT) or self._loop_starts_with_input(
+                    nodes[index + 1]
+                ):
                     index += 1
                     continue
             if self._terminal_housekeeping(nodes, index):

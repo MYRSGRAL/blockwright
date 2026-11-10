@@ -8,6 +8,100 @@ from tests.test_study import _RETRY_INPUT
 
 
 class StudyPresentation(unittest.TestCase):
+    def test_menu_caption_belongs_to_validated_input(self) -> None:
+        code = (
+            'int main(){int mode;cout<<"Заполнение: 1 - вручную, 2 - случайно: ";'
+            'if(!(cin>>mode)||(mode!=1&&mode!=2)){cout<<"Ошибка";return 1;}}'
+        )
+        self.assertEqual(build(code).items, [M.Simple(M.INPUT, "Ввод mode")])
+        self.assertTrue(
+            any(
+                isinstance(x, M.Simple) and "Заполнение" in x.text
+                for x in walk(build(code, study=False))
+            )
+        )
+
+    def test_question_caption_belongs_to_direct_input(self) -> None:
+        self.assertEqual(
+            build('int main(){int n;cout<<"Сколько строк? ";cin>>n;}').items,
+            [M.Simple(M.INPUT, "Ввод n")],
+        )
+        body = build('int main(){int n;cout<<"Результат готов";cin>>n;}')
+        self.assertEqual(len(body.items), 2)
+
+    def test_short_numeric_assignments_share_a_block(self) -> None:
+        body = build(
+            "int main(){int a[10],j,t;t=a[j];a[j]=a[j + 1];a[j + 1]=t;cout<<t;}"
+        )
+        self.assertEqual(
+            body.items[0],
+            M.Simple(M.PROCESS, "t = a[j]; a[j] = a[j + 1]; a[j + 1] = t"),
+        )
+        self.assertEqual(body.items[1], M.Simple(M.OUTPUT, "Вывод t"))
+        detailed = build("int main(){int a,b,t;t=a;a=b;b=t;}", study=False)
+        self.assertGreaterEqual(len(detailed.items), 3)
+
+    def test_assignment_groups_do_not_cross_control_or_effects(self) -> None:
+        for code in (
+            "int main(){int a,b;a=b;cout<<a;b=a;}",
+            "int main(){int a,b;a=f();b=a;}",
+            "int main(){int a[10],j,t;t=a[j++];a[j]=t;}",
+        ):
+            with self.subTest(code=code):
+                self.assertFalse(
+                    any(
+                        isinstance(x, M.Simple) and "; " in x.text
+                        for x in walk(build(code))
+                    )
+                )
+
+    def test_prompt_before_input_and_processing_loop_is_absorbed(self) -> None:
+        code = (
+            "int main(){int a[100],n;long long sum=0;int count=0;cin>>n;"
+            'cout<<"Введите элементы массива: ";'
+            'for(int i=0;i<n;i++){if(!(cin>>a[i])){cout<<"Ошибка";return 1;}'
+            "if(a[i]%2==0){sum=sum+a[i];count++;}}cout<<sum<<count;}"
+        )
+        body = build(code)
+        self.assertFalse(
+            any(
+                isinstance(x, M.Simple) and "Введите элементы" in x.text
+                for x in walk(body)
+            )
+        )
+        self.assertEqual(sum(isinstance(x, M.ForLoop) for x in walk(body)), 1)
+        self.assertIn(M.Simple(M.INPUT, "Ввод a[i]"), list(walk(body)))
+        self.assertTrue(
+            any(isinstance(x, M.If) and "a[i]" in x.cond for x in walk(body))
+        )
+        for name in ("sum", "count"):
+            self.assertTrue(
+                any(
+                    isinstance(x, M.Simple) and x.kind == M.PROCESS and name in x.text
+                    for x in walk(body)
+                )
+            )
+        self.assertTrue(
+            any(
+                isinstance(x, M.Simple) and "Введите элементы" in x.text
+                for x in walk(build(code, study=False))
+            )
+        )
+
+    def test_prompt_is_preserved_when_loop_does_not_start_with_input(self) -> None:
+        for action in ('cout<<"Результат";', "n=f();"):
+            code = (
+                'int main(){int a[10],n;cout<<"Введите элементы массива: ";'
+                "for(int i=0;i<n;i++){" + action + "cin>>a[i];}}"
+            )
+            with self.subTest(action=action):
+                self.assertTrue(
+                    any(
+                        isinstance(x, M.Simple) and "Введите элементы" in x.text
+                        for x in walk(build(code))
+                    )
+                )
+
     def test_independent_cin_retries_share_no_state(self) -> None:
         code = (
             "int main(){double a,b;"
