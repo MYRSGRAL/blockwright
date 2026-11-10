@@ -246,7 +246,12 @@ class StudyBuilder(Builder):
             if node.type in {"identifier", "qualified_identifier"}
             and self._name(node, "cin")
         ]
-        return super().build_body(body, is_main)
+        result = super().build_body(body, is_main)
+        if self.opts.io_style == "symbols":
+            from .symbolic_study import symbolic_labels
+
+            symbolic_labels(result)
+        return result
 
     def t(self, node: Any) -> str:
         """C-cast int отображается как целая часть с усечением к нулю."""
@@ -520,7 +525,7 @@ class StudyBuilder(Builder):
         if node.type != "declaration":
             return None
         statements = self._declaration(node)
-        if not statements or len(statements) > _MAX_INITIALIZATIONS:
+        if not statements or len(statements) > self._action_limit():
             return None
         declarations = node.children_by_field_name("declarator")
         if len(declarations) != len(statements):
@@ -549,6 +554,45 @@ class StudyBuilder(Builder):
             return None
         text = f"{self.t(target)} = {self.t(value)}"
         return [text] if len(text) <= _MAX_INITIALIZATION_TEXT else None
+
+    def _symbolic_assignment(self, node: Any) -> list[str] | None:
+        if self.opts.io_style != "symbols" or node.type != "expression_statement":
+            return None
+        expression = self._unwrap(self._expr(node))
+        if expression is None:
+            return None
+        if expression.type == "update_expression":
+            target = expression.child_by_field_name("argument")
+            if (
+                target is not None
+                and target.type == "identifier"
+                and self._numeric_target(target)
+            ):
+                statement = self._simple_from_node(expression)
+                return [statement.text] if statement is not None else None
+            return None
+        if expression.type != "assignment_expression" or self.op_of(expression) != "=":
+            return None
+        target, value = self.sides(expression)
+
+        def numeric(part: Any) -> bool:
+            part = self._unwrap(part)
+            if self._numeric_target(part) or self._literal_value(part):
+                return True
+            if (
+                part is not None
+                and part.type == "binary_expression"
+                and self.op_of(part) in {"+", "-", "*", "/", "%"}
+            ):
+                return all(numeric(side) for side in self.sides(part))
+            return False
+
+        if not self._numeric_target(target) or not numeric(value):
+            return None
+        return [f"{self.t(target)} = {self.t(value)}"]
+
+    def _action_limit(self) -> int:
+        return 4 if self.opts.io_style == "symbols" else _MAX_INITIALIZATIONS
 
     def _simple_from_node(self, node: Any) -> M.Simple | None:
         if node is None:
@@ -677,7 +721,9 @@ class StudyBuilder(Builder):
                 for p in visible
                 if self._string_value(p) is not None
             ]
-            if values and self._compact_output(visible):
+            if values and (
+                self.opts.io_style == "symbols" or self._compact_output(visible)
+            ):
                 return M.Simple(kind, "Вывод " + ", ".join(self.t(p) for p in values))
             if values:
                 return M.Simple(kind, self._weave(self._segments(visible), "Вывод "))
@@ -957,6 +1003,11 @@ class StudyBuilder(Builder):
         )
 
     def k_for(self, n: Any, r: dict) -> list[object]:
+        if self.opts.io_style == "symbols":
+            from .random_study import random_fill
+
+            if (text := random_fill(self, n)) is not None:
+                return [M.Simple(M.PROCESS, text)]
         if self._storage_loop(n):
             return []
         return super().k_for(n, r)
@@ -1297,11 +1348,44 @@ class StudyBuilder(Builder):
             for i, node in enumerate(nodes)
             if (value := array_output(self, node)) is not None
         }
+        matrix_groups = {}
+        summed_outputs = {}
+        if (
+            self.opts.io_style == "symbols"
+            and self.fn_is_main
+            and self.opts.checks == "hide"
+        ):
+            from .matrix_study import conditional_matrix_fill, summed_matrix_output
+
+            matrix_groups = {
+                i: group
+                for i in range(len(nodes))
+                if (group := conditional_matrix_fill(self, nodes, i)) is not None
+            }
+            summed_outputs = {
+                i: items
+                for i, node in enumerate(nodes)
+                if (items := summed_matrix_output(self, node)) is not None
+            }
         out = []
         index = 0
         output_values = None
         while index < len(nodes):
             node = nodes[index]
+            if index in matrix_groups:
+                end, items = matrix_groups[index]
+                out.extend(items)
+                output_values = None
+                index = end
+                continue
+            if index + 1 in summed_outputs and array_caption(self, node):
+                index += 1
+                continue
+            if index in summed_outputs:
+                out.extend(summed_outputs[index])
+                output_values = None
+                index += 1
+                continue
             if index in input_plan.hidden:
                 index += 1
                 continue
@@ -1324,9 +1408,11 @@ class StudyBuilder(Builder):
                     output_values = values
                 index += 1
                 continue
-            initializations = self._literal_initializations(
-                node
-            ) or self._short_assignment(node)
+            initializations = (
+                self._literal_initializations(node)
+                or self._short_assignment(node)
+                or self._symbolic_assignment(node)
+            )
             if initializations:
                 next_index = index + 1
                 while next_index < len(nodes):
@@ -1335,12 +1421,14 @@ class StudyBuilder(Builder):
                         or next_index in input_plan.hidden
                     ):
                         break
-                    following = self._literal_initializations(
-                        nodes[next_index]
-                    ) or self._short_assignment(nodes[next_index])
+                    following = (
+                        self._literal_initializations(nodes[next_index])
+                        or self._short_assignment(nodes[next_index])
+                        or self._symbolic_assignment(nodes[next_index])
+                    )
                     if (
                         not following
-                        or len(initializations) + len(following) > _MAX_INITIALIZATIONS
+                        or len(initializations) + len(following) > self._action_limit()
                     ):
                         break
                     combined = initializations + following
@@ -1348,7 +1436,8 @@ class StudyBuilder(Builder):
                         break
                     initializations = combined
                     next_index += 1
-                out.append(M.Simple(M.PROCESS, "; ".join(initializations)))
+                separator = "\n" if self.opts.io_style == "symbols" else "; "
+                out.append(M.Simple(M.PROCESS, separator.join(initializations)))
                 output_values = None
                 index = next_index
                 continue
@@ -1395,6 +1484,15 @@ class StudyBuilder(Builder):
                 ):
                     index += 1
                     continue
+            if self.opts.io_style == "symbols" and index + 1 < len(nodes):
+                from .random_study import random_fill, random_seed
+
+                if (
+                    random_seed(self, node)
+                    and random_fill(self, nodes[index + 1]) is not None
+                ):
+                    index += 1
+                    continue
             if self._terminal_housekeeping(nodes, index):
                 index += 2
                 continue
@@ -1412,10 +1510,12 @@ class StudyBuilder(Builder):
                     if self._string_value(p) is None
                     and not self._display_manipulator(p)
                 ]
-                if (
-                    visible
-                    and all(p.type == "identifier" for p in visible)
-                    and self._compact_output(stream[1])
+                if visible and (
+                    self.opts.io_style == "symbols"
+                    or (
+                        all(p.type == "identifier" for p in visible)
+                        and self._compact_output(stream[1])
+                    )
                 ):
                     values = [self.t(p) for p in visible]
             if values and output_values and out and out[-1].kind == M.OUTPUT:

@@ -52,13 +52,13 @@ class Glyphs:
 
 
 FOR_STYLES = ["auto", "hexagon", "decision"]
-IO_STYLES = ["pretty", "list", "code"]
+IO_STYLES = ["symbols", "pretty", "list", "code"]
 RET_STYLES = ["auto", "value", "end"]
 PNG_SCALES = [0, 1, 2, 3, 4]
 
 DEFAULTS = {
-    "for_style": "decision",
-    "io_style": "pretty",
+    "for_style": "hexagon",
+    "io_style": "symbols",
     "return_style": "auto",
     "width": 38,
     "png": 0,
@@ -85,6 +85,7 @@ L10N = {
         "for_auto": "как в коде",
         "for_hexagon": "шестиугольник",
         "for_decision": "через условие",
+        "io_symbols": "краткие обозначения",
         "io_pretty": "связной фразой",
         "io_list": "перечислением",
         "io_code": "как в коде",
@@ -122,6 +123,7 @@ L10N = {
         "for_auto": "as in code",
         "for_hexagon": "hexagon",
         "for_decision": "as a decision",
+        "io_symbols": "symbols",
         "io_pretty": "as a sentence",
         "io_list": "as a list",
         "io_code": "as in code",

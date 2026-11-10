@@ -23,7 +23,9 @@ class ReportLayout(unittest.TestCase):
         for path in sorted((Path(__file__).parent / "fixtures/study").glob("*.cpp")):
             with self.subTest(path=path.name):
                 source = project.load(str(path))
-                for chart in project.charts(source, Opts(), source.known):
+                for chart in project.charts(
+                    source, Opts(page_height=926), source.known
+                ):
                     info = chart.info
                     fn = M.Function(
                         info["name"],
@@ -35,7 +37,7 @@ class ReportLayout(unittest.TestCase):
                         "cpp",
                         chart.body,
                     )
-                    frame, options = layout_for_report(fn, Opts())
+                    frame, options = layout_for_report(fn, Opts(page_height=926))
                     self.assertLessEqual(frame.width + 2 * MARGIN, options.page_width)
                     self.assertTrue(all(s["h"] >= 28 for s in frame.shapes))
                     pages = split_pages(

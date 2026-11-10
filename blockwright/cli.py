@@ -25,8 +25,8 @@ from .render import MARGIN, TITLE_H, frame_to_dict, render_svg
 class Opts:
     max_chars: int = 38
     keep_std: bool = False
-    io_style: str = "pretty"  # pretty | list | code
-    for_style: str = "decision"  # Явные условие и шаг цикла по умолчанию.
+    io_style: str | None = None  # В учебном режиме — краткие обозначения.
+    for_style: str | None = None
     return_style: str = "auto"  # auto | value | end
     lang: str = "ru"  # language of the words on the charts
     yes_label: str = "Да"
@@ -37,8 +37,14 @@ class Opts:
     plain_begin: bool = False
     study: bool = True
     checks: str = "hide"
-    page_height: float = 926.0
+    page_height: float = 0.0
     page_width: float = 605.0
+
+    def __post_init__(self) -> None:
+        if self.io_style is None:
+            self.io_style = "symbols" if self.study else "pretty"
+        if self.for_style is None:
+            self.for_style = "hexagon" if self.study else "auto"
 
 
 CHART_WORDS = {
@@ -217,9 +223,9 @@ def build_parser():
     ap.add_argument(
         "--page-height",
         type=float,
-        default=926.0,
+        default=0.0,
         metavar="PX",
-        help="высота области страницы при 96 dpi; 0 — непрерывная схема",
+        help="высота области страницы при 96 dpi; по умолчанию 0 — непрерывная схема",
     )
     ap.add_argument(
         "--page-width",
@@ -231,15 +237,16 @@ def build_parser():
     ap.add_argument(
         "--for-style",
         choices=["auto", "hexagon", "decision"],
-        default="decision",
+        default=None,
         help="оформление for: шестиугольник «подготовка» или явные блоки",
     )
     ap.add_argument(
         "--io-style",
-        choices=["pretty", "list", "natural", "code"],
-        default="pretty",
+        choices=["pretty", "list", "natural", "code", "symbols"],
+        default=None,
         help="текст ввода-вывода: pretty — связная фраза «Вывод: Итого {n} шт.», "
-        "list — перечисление через запятую, code — исходный текст",
+        "list — перечисление через запятую, code — исходный текст, "
+        "symbols — краткие обозначения и группы действий в учебной схеме",
     )
     ap.add_argument(
         "--return-style",

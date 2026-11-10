@@ -34,7 +34,15 @@ LABEL_SIZE = 12
 
 # ---------------------------------------------------------------- shapes
 def make_shape(kind, text, opts):
-    lines = wrap_text(text, opts.max_chars)
+    lines = (
+        [
+            line
+            for paragraph in text.splitlines()
+            for line in wrap_text(paragraph, opts.max_chars)
+        ]
+        if getattr(opts, "io_style", "") == "symbols" and "\n" in text
+        else wrap_text(text, opts.max_chars)
+    )
     tw = max(text_width(l, FONT_SIZE) for l in lines)
     th = len(lines) * LINE_H
     if kind == M.CONNECTOR:
@@ -622,6 +630,18 @@ def _pretest_loop(header_shape, body, opts, labels, pre=None, post=None):
     if labels[1]:
         f.labels.append(_label(d["w"] / 2 + 5, cy - 6, labels[1], "start"))
 
+    if d["kind"] == M.PREP:
+        left = (d["x"], cy)
+        outside = min(point[0] for edge in f.edges for point in edge["points"]) - CH_GAP
+        for edge in f.edges:
+            points = edge["points"]
+            if edge["arrow"] and len(points) >= 4 and points[-1] == (0.0, top):
+                lane = points[-3][0]
+                prefix = points[:-3]
+                if lane >= left[0]:
+                    prefix += [(lane, join_y), (outside, join_y)]
+                    lane = outside
+                edge["points"] = prefix + [(lane, cy), left]
     f.spine = 0.0
     f.height = exit_y
     f.exit = (0.0, exit_y)

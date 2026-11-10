@@ -15,11 +15,26 @@ from blockwright import langs
 from blockwright.cli import Opts, build_parser, main
 
 
+def legacy_main(args: list[str]) -> int:
+    """Прежние подписи доступны через явный выбор стиля."""
+    return main(
+        [
+            *args,
+            "--io-style",
+            "pretty",
+            "--for-style",
+            "decision",
+            "--page-height",
+            "926",
+        ]
+    )
+
+
 class Product(unittest.TestCase):
     def test_text_input_checks_do_not_hide_the_word_search(self) -> None:
         source = Path(__file__).parent / "fixtures/study/longest_word.cpp"
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
+            self.assertEqual(legacy_main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
             svg = (Path(tmp) / "longest_word__main.svg").read_text(encoding="utf-8")
             for label in (
                 "Ввод text",
@@ -43,7 +58,7 @@ class Product(unittest.TestCase):
     def test_matrix_protocol_is_hidden_in_generated_svg(self) -> None:
         source = Path(__file__).parent / "fixtures/study/matrix.cpp"
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
+            self.assertEqual(legacy_main([str(source), "--no-ui", "-q", "-o", tmp]), 0)
             svg = (Path(tmp) / "matrix__main.svg").read_text(encoding="utf-8")
             for label in ("Ввод n, m", "Ввод a[n][m]", "Вывод b[n]", "b[i] = a[i][0]"):
                 self.assertIn(label, svg)
@@ -57,7 +72,9 @@ class Product(unittest.TestCase):
             source = Path(tmp) / "array.cpp"
             source.write_text(DIRECT_CODE, encoding="utf-8")
             out = Path(tmp) / "out"
-            self.assertEqual(main([str(source), "--no-ui", "-q", "-o", str(out)]), 0)
+            self.assertEqual(
+                legacy_main([str(source), "--no-ui", "-q", "-o", str(out)]), 0
+            )
             svg = (out / "array__main.svg").read_text(encoding="utf-8")
             for label in ("Ввод n", "Ввод a[n]", "Вывод a[n]", "a[k] = a[i]", "n = k"):
                 self.assertIn(label, svg)
@@ -75,7 +92,10 @@ class Product(unittest.TestCase):
                 with self.subTest(mode=name):
                     out = Path(tmp) / name
                     self.assertEqual(
-                        main([str(source), "--no-ui", "-q", "-o", str(out), *flags]), 0
+                        legacy_main(
+                            [str(source), "--no-ui", "-q", "-o", str(out), *flags]
+                        ),
+                        0,
                     )
                     svg = (out / "lab2__main.svg").read_text(encoding="utf-8")
                     self.assertEqual("Ошибка" in svg, visible)
@@ -96,7 +116,12 @@ class Product(unittest.TestCase):
         self.assertEqual(opts.checks, "hide")
         self.assertEqual(build_parser().parse_args(["--checks", "show"]).checks, "show")
         self.assertFalse(hasattr(opts, "notation"))
-        self.assertEqual(opts.for_style, "decision")
+        self.assertEqual(opts.for_style, "hexagon")
+        self.assertEqual(opts.io_style, "symbols")
+        self.assertEqual(opts.page_height, 0)
+        detailed = Opts(study=False)
+        self.assertEqual(detailed.io_style, "pretty")
+        self.assertEqual(detailed.for_style, "auto")
         args = build_parser().parse_args(["--detail", "full"])
         self.assertEqual(args.detail, "full")
 

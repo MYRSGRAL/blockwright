@@ -101,7 +101,11 @@ def build(code: str, *, checks: str = "hide", study: bool = True) -> M.Seq:
     tree, spec, errors = P.parse_source(src, P.guess_language("input.cpp", code))
     source = project.Source("input.cpp", src, spec, tree, errors)
     known = P.collect_known_names(src, tree.root_node, spec)
-    charts = project.charts(source, Opts(study=study, checks=checks), known)
+    charts = project.charts(
+        source,
+        Opts(study=study, checks=checks, io_style="pretty", for_style="decision"),
+        known,
+    )
     return next(chart.body for chart in charts if chart.info["main"])
 
 
@@ -797,7 +801,7 @@ class TextInputGroups(unittest.TestCase):
         source = project.Source("input.cpp", src, spec, tree, errors)
         charts = project.charts(
             source,
-            Opts(checks="hide"),
+            Opts(checks="hide", io_style="pretty", for_style="decision"),
             P.collect_known_names(src, tree.root_node, spec),
         )
         body = next(chart.body for chart in charts if not chart.info["main"])

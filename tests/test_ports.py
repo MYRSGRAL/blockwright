@@ -21,11 +21,14 @@ class ShapePorts(unittest.TestCase):
 
         for kind in (M.PROCESS, M.INPUT, M.OUTPUT, M.PREDEF, M.PREP, M.CONNECTOR):
             self.assertEqual(allowed_ports({"kind": kind}, True), ("bottom",))
-            self.assertEqual(allowed_ports({"kind": kind}, False), ("top",))
+            self.assertEqual(
+                allowed_ports({"kind": kind}, False),
+                ("top", "left") if kind == M.PREP else ("top",),
+            )
         self.assertEqual(allowed_ports({"kind": M.DECISION}, True), ("bottom", "right"))
         for path in sorted((Path(__file__).parent / "fixtures/study").glob("*.cpp")):
             source = project.load(str(path))
-            for chart in project.charts(source, Opts(), source.known):
+            for chart in project.charts(source, Opts(page_height=926), source.known):
                 info = chart.info
                 fn = M.Function(
                     info["name"],
@@ -37,7 +40,7 @@ class ShapePorts(unittest.TestCase):
                     "cpp",
                     chart.body,
                 )
-                frame, options = layout_for_report(fn, Opts())
+                frame, options = layout_for_report(fn, Opts(page_height=926))
                 self.assertEqual(validate_ports(frame), [], path.name)
                 for page in split_pages(
                     frame,
