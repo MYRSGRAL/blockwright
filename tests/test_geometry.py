@@ -31,6 +31,24 @@ def options(**changes: object) -> SimpleNamespace:
 
 
 class GeometryTests(unittest.TestCase):
+    def test_compact_loop_keeps_header_and_valid_ports_in_both_modes(self) -> None:
+        for study in (True, False):
+            with self.subTest(study=study):
+                loop = M.ForLoop(
+                    M.Seq([M.Simple(M.PROCESS, "работа")]),
+                    style="hexagon",
+                    header="i = 0, n - 1",
+                )
+                frame = layout(loop, options(study=study))
+                headers = [shape for shape in frame.shapes if shape["kind"] == M.PREP]
+                self.assertEqual(len(headers), 1)
+                self.assertEqual(headers[0]["text"], "i = 0, n - 1")
+                self.assertFalse(
+                    any(shape["kind"] == M.DECISION for shape in frame.shapes)
+                )
+                self.assertEqual(validate_geometry(frame), [])
+                self.assertEqual(validate_ports(frame), [])
+
     def test_continue_after_output_leaves_bottom_vertically(self) -> None:
         for study in (False, True):
             for loop_kind in ("while", "do", "for"):

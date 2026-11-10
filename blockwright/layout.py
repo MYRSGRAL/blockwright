@@ -601,12 +601,24 @@ def _pretest_loop(header_shape, body, opts, labels, pre=None, post=None):
         continue_arrow_y=cont_join,
     )
 
-    f.edges.append(
-        _edge(
-            [(d["w"] / 2, cy), (right_ch, cy), (right_ch, exit_y), (0.0, exit_y)],
-            arrow=False,
-        )
-    )
+    if d["kind"] == M.PREP:
+        # У подготовки выход снизу; разветвление располагается перед телом цикла.
+        branch_y = hy + V_GAP / 2
+        exit_points = [
+            (0.0, hy),
+            (0.0, branch_y),
+            (right_ch, branch_y),
+            (right_ch, exit_y),
+            (0.0, exit_y),
+        ]
+    else:
+        exit_points = [
+            (d["w"] / 2, cy),
+            (right_ch, cy),
+            (right_ch, exit_y),
+            (0.0, exit_y),
+        ]
+    f.edges.append(_edge(exit_points, arrow=False))
     if labels[1]:
         f.labels.append(_label(d["w"] / 2 + 5, cy - 6, labels[1], "start"))
 
@@ -637,7 +649,7 @@ def layout_while(item, opts):
 
 
 def layout_for(item, opts):
-    if item.style == "hexagon" and not getattr(opts, "study", False):
+    if item.style == "hexagon":
         d = make_shape(M.PREP, item.header, opts)
         return _pretest_loop(d, item.body, opts, ("", ""))
     d = make_shape(M.DECISION, item.cond or "истина", opts)
