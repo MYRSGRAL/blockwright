@@ -49,6 +49,32 @@ class GeometryTests(unittest.TestCase):
                 self.assertEqual(validate_geometry(frame), [])
                 self.assertEqual(validate_ports(frame), [])
 
+    def test_compact_loop_completion_leaves_the_right_port(self) -> None:
+        for study in (True, False):
+            with self.subTest(study=study):
+                frame = layout(
+                    M.ForLoop(
+                        M.Seq([M.Simple(M.PROCESS, "работа")]),
+                        style="hexagon",
+                        header="i = 0, n - 1",
+                    ),
+                    options(study=study),
+                )
+                header = next(
+                    shape for shape in frame.shapes if shape["kind"] == M.PREP
+                )
+                right = shape_port(header, "right")
+                exits = [edge for edge in frame.edges if edge["points"][0] == right]
+                self.assertEqual(len(exits), 1)
+                self.assertGreater(exits[0]["points"][1][0], right[0])
+                self.assertEqual(exits[0]["points"][1][1], right[1])
+                bottom = shape_port(header, "bottom")
+                self.assertEqual(
+                    sum(edge["points"][0] == bottom for edge in frame.edges), 1
+                )
+                self.assertEqual(validate_geometry(frame), [])
+                self.assertEqual(validate_ports(frame), [])
+
     def test_compact_loop_returns_directly_to_left_port(self) -> None:
         for control in (None, "continue", "break"):
             with self.subTest(control=control):

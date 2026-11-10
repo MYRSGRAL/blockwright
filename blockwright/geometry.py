@@ -79,7 +79,7 @@ def junction_arrows(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def allowed_ports(shape: Shape, outgoing: bool) -> tuple[str, ...]:
-    """Вертикальные входы и выходы; возврат компактного цикла входит слева."""
+    """Допустимые входы и выходы фигур, включая боковые порты цикла."""
     if shape["kind"] == "connector" and shape.get("flow") == "up":
         return ("right",) if outgoing else ("left",)
     if shape["kind"] == "terminator":
@@ -88,7 +88,11 @@ def allowed_ports(shape: Shape, outgoing: bool) -> tuple[str, ...]:
         if shape.get("role") == "end" and outgoing:
             return ()
     if outgoing:
-        return ("bottom", "right") if shape["kind"] == "decision" else ("bottom",)
+        return (
+            ("bottom", "right")
+            if shape["kind"] in {"decision", "preparation"}
+            else ("bottom",)
+        )
     return ("top", "left") if shape["kind"] == "preparation" else ("top",)
 
 

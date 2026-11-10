@@ -20,7 +20,10 @@ class ShapePorts(unittest.TestCase):
         from blockwright.geometry import allowed_ports, validate_ports
 
         for kind in (M.PROCESS, M.INPUT, M.OUTPUT, M.PREDEF, M.PREP, M.CONNECTOR):
-            self.assertEqual(allowed_ports({"kind": kind}, True), ("bottom",))
+            self.assertEqual(
+                allowed_ports({"kind": kind}, True),
+                ("bottom", "right") if kind == M.PREP else ("bottom",),
+            )
             self.assertEqual(
                 allowed_ports({"kind": kind}, False),
                 ("top", "left") if kind == M.PREP else ("top",),

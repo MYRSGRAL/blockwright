@@ -609,23 +609,12 @@ def _pretest_loop(header_shape, body, opts, labels, pre=None, post=None):
         continue_arrow_y=cont_join,
     )
 
-    if d["kind"] == M.PREP:
-        # У подготовки выход снизу; разветвление располагается перед телом цикла.
-        branch_y = hy + V_GAP / 2
-        exit_points = [
-            (0.0, hy),
-            (0.0, branch_y),
-            (right_ch, branch_y),
-            (right_ch, exit_y),
-            (0.0, exit_y),
-        ]
-    else:
-        exit_points = [
-            (d["w"] / 2, cy),
-            (right_ch, cy),
-            (right_ch, exit_y),
-            (0.0, exit_y),
-        ]
+    exit_points = [
+        (d["w"] / 2, cy),
+        (right_ch, cy),
+        (right_ch, exit_y),
+        (0.0, exit_y),
+    ]
     f.edges.append(_edge(exit_points, arrow=False))
     if labels[1]:
         f.labels.append(_label(d["w"] / 2 + 5, cy - 6, labels[1], "start"))
