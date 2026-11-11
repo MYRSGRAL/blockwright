@@ -34,21 +34,32 @@ class SourceLoading(unittest.TestCase):
 
     def test_pointer_array_new_preserves_original_source_in_full_mode(self) -> None:
         for allocation in ("new int*[m]", "new int ** [m]", "new Widget*[m]"):
-            with (
-                self.subTest(allocation=allocation),
-                tempfile.TemporaryDirectory() as tmp,
-            ):
-                text = f"// Русский комментарий\nint main(){{int m=3; auto a={allocation};}}"
-                path = Path(tmp) / "input.cpp"
-                path.write_text(text, encoding="utf-8")
-                source = load(str(path))
-                self.assertEqual(source.errors, 0)
-                self.assertEqual(source.src, text.encode("utf-8"))
-                opts = Opts()
-                opts.study = False
-                result = charts(source, opts, source.known)
-                self.assertEqual(len(result), 1)
-                self.assertIn(allocation, repr(result[0].body))
+            for newline in ("\n", "\r\n"):
+                with (
+                    self.subTest(allocation=allocation, newline=repr(newline)),
+                    tempfile.TemporaryDirectory() as tmp,
+                ):
+                    text = (
+                        f"// Русский комментарий{newline}"
+                        f"int main(){{int m=3; auto a={allocation};}}"
+                    )
+                    original = text.encode("utf-8")
+                    path = Path(tmp) / "input.cpp"
+                    path.write_bytes(original)
+                    source = load(str(path))
+                    self.assertEqual(source.errors, 0)
+                    self.assertEqual(source.src, original)
+                    info = outline(source)[0]
+                    self.assertEqual(info["line"], 2)
+                    self.assertIn(
+                        allocation.encode("utf-8"),
+                        source.src[info["body"].start_byte : info["body"].end_byte],
+                    )
+                    opts = Opts()
+                    opts.study = False
+                    result = charts(source, opts, source.known)
+                    self.assertEqual(len(result), 1)
+                    self.assertIn(allocation, repr(result[0].body))
 
     def test_pointer_new_does_not_hide_invalid_syntax(self) -> None:
         for statement in (

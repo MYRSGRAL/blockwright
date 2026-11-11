@@ -11,7 +11,7 @@ class ConditionalMatrixInput(unittest.TestCase):
     def test_even_column_sums_source_keeps_algorithm(self) -> None:
         code = (
             Path(__file__).parent / "fixtures/study/even_column_sums.cpp"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         items = list(walk(build(code)))
         for name in ("n, m", "mode", "a[i][j]"):
             self.assertIn(M.Simple(M.INPUT, "Ввод " + name), items)

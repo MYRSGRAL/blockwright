@@ -40,7 +40,7 @@ class DefaultStudy(unittest.TestCase):
     def test_sorting_source_generates_approved_structure_without_flags(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source_path = Path(directory) / "sorting.cpp"
-            source_path.write_text(SOURCE)
+            source_path.write_text(SOURCE, encoding="utf-8")
             source = project.load(str(source_path))
             chart = project.charts(source, Opts(), source.known)[0]
             items = list(walk(chart.body))
