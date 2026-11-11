@@ -137,7 +137,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -247,7 +247,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -282,7 +282,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 1, count - 1",
+        "header": "i = 1; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -454,7 +454,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -564,7 +564,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -599,7 +599,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 1, count - 1",
+        "header": "i = 1; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1355,7 +1355,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1465,7 +1465,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1500,7 +1500,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 1, count - 1",
+        "header": "i = 1; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1672,7 +1672,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1782,7 +1782,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 0, count - 1",
+        "header": "i = 0; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",
@@ -1817,7 +1817,7 @@
          "type": "Seq"
         },
         "cond": null,
-        "header": "i = 1, count - 1",
+        "header": "i = 1; i < count; i++",
         "init": null,
         "style": "hexagon",
         "type": "ForLoop",

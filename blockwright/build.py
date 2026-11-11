@@ -424,7 +424,7 @@ class Builder:
         return self.t(decls[0][0]), self.t(decls[0][1])
 
     def _canonical_for(self, init, cond, upd):
-        """Header text for a plain counting loop, e.g. `i = 0, n - 1`; None otherwise."""
+        """Полная подпись счётного цикла: начало, условие и исходный шаг."""
         if init is None or cond is None or upd is None:
             return None
         var, start = self._var_and_start(init)
@@ -438,7 +438,6 @@ class Builder:
             return None
         if self.t(left) != var:
             return None
-        limit = self.t(right)
         u = self.t(upd).rstrip(self.spec.statement_end or ";").strip()
         v = re.escape(var)
         step = None
@@ -457,15 +456,7 @@ class Builder:
             return None
         if step < 0 and op not in (">", ">="):
             return None
-        end = (
-            limit
-            if op in ("<=", ">=")
-            else (_minus_one(limit) if step > 0 else _plus_one(limit))
-        )
-        header = f"{var} = {start}, {end}"
-        if step != 1:
-            header += f", {step}"
-        return header
+        return f"{var} = {start}; {self.cond_text(cond)}; {u}"
 
     def k_for(self, n, r):
         body = self.block(self.find(n, r.get("body")))
@@ -501,9 +492,10 @@ class Builder:
                 cond=f"{var} {op} {end}",
                 update=M.Simple(M.PROCESS, f"{var} {a} {upd}"),
             )
-        header = f"{var} = {start}, {end}"
-        if step != 1:
-            header += f", {step}"
+        a = self.spec.assign
+        op = "<=" if step > 0 else ">="
+        update = f"{var} + {step}" if step > 0 else f"{var} - {-step}"
+        header = f"{var} {a} {start}; {var} {op} {end}; {var} {a} {update}"
         return M.ForLoop(body=body, style="hexagon", header=header)
 
     def k_counting(self, n, r):
