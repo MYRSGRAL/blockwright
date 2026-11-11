@@ -378,6 +378,8 @@
          "type": "Seq"
         },
         "cond": "true",
+        "header": "",
+        "style": "decision",
         "type": "While"
        },
        {
@@ -871,6 +873,8 @@
          "type": "Seq"
         },
         "cond": "true",
+        "header": "",
+        "style": "decision",
         "type": "While"
        },
        {
@@ -1384,6 +1388,8 @@
          "type": "Seq"
         },
         "cond": "true",
+        "header": "",
+        "style": "decision",
         "type": "While"
        },
        {

@@ -238,7 +238,7 @@ def build_parser():
         "--for-style",
         choices=["auto", "hexagon", "decision"],
         default=None,
-        help="оформление for: шестиугольник «подготовка» или явные блоки",
+        help="оформление счётных for/while: шестиугольник «подготовка» или явные блоки",
     )
     ap.add_argument(
         "--io-style",

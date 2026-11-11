@@ -21,6 +21,8 @@ class LoopHeadersTests(unittest.TestCase):
             ("j=0; j < m - 1; j++", "j = 0; j < m - 1; j++"),
             ("j=m; j >= 0; --j", "j = m; j >= 0; --j"),
             ("j=0; j <= m; j += 2", "j = 0; j <= m; j += 2"),
+            ("j=0; j < m; j=j+1", "j = 0; j < m; j=j+1"),
+            ("j=m; j > 0; j=j-2", "j = m; j > 0; j=j-2"),
         ):
             with self.subTest(control=control), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "loops.cpp"
@@ -29,7 +31,9 @@ class LoopHeadersTests(unittest.TestCase):
                 )
                 source = project.load(str(path))
                 for style in ("auto", "hexagon"):
-                    chart = project.charts(source, Opts(for_style=style), source.known)[0]
+                    chart = project.charts(source, Opts(for_style=style), source.known)[
+                        0
+                    ]
                     loop = next(x for x in walk(chart.body) if isinstance(x, M.ForLoop))
                     self.assertEqual(loop.style, "hexagon")
                     self.assertEqual(loop.header, expected)

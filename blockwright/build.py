@@ -364,10 +364,18 @@ class Builder:
         return [M.Simple(M.PROCESS, txt)] if txt else []
 
     def k_while(self, n, r):
+        from .counted_while import counted_while_header
+
         cond = self.find(n, r.get("condition"))
+        body = self.find(n, r.get("body"))
+        header = None
+        if self.opts.for_style in {"auto", "hexagon"}:
+            header = counted_while_header(self, n, cond, body)
         loop = M.While(
             self.cond_text(cond) if cond is not None else self.L("true"),
-            self.block(self.find(n, r.get("body"))),
+            self.block(body),
+            style="hexagon" if header else "decision",
+            header=header or "",
         )
         return self.loop_else(loop, self.find(n, r.get("else")))
 
@@ -425,12 +433,14 @@ class Builder:
 
     def _canonical_for(self, init, cond, upd):
         """Полная подпись счётного цикла: начало, условие и исходный шаг."""
+        from .counted_while import counter_step
+
         if init is None or cond is None or upd is None:
             return None
         var, start = self._var_and_start(init)
         if not var or not start or not _VAR_RE.fullmatch(var):
             return None
-        left, right = self.sides(cond)
+        left, _ = self.sides(cond)
         if left is None:
             return None
         op = self.op_of(cond)
@@ -439,18 +449,8 @@ class Builder:
         if self.t(left) != var:
             return None
         u = self.t(upd).rstrip(self.spec.statement_end or ";").strip()
-        v = re.escape(var)
-        step = None
-        if re.fullmatch(rf"(?:\+\+\s*{v}|{v}\s*\+\+)", u):
-            step = 1
-        elif re.fullmatch(rf"(?:--\s*{v}|{v}\s*--)", u):
-            step = -1
-        else:
-            m = re.fullmatch(rf"{v}\s*([+-])=\s*([+-]?\d+)", u)
-            if not m:
-                return None
-            step = int(m.group(2)) * (1 if m.group(1) == "+" else -1)
-        if step == 0:
+        step = counter_step(var, u)
+        if step is None or step == 0:
             return None
         if step > 0 and op not in ("<", "<="):
             return None

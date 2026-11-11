@@ -59,6 +59,8 @@ class If:
 class While:
     cond: str
     body: object
+    style: str = "decision"
+    header: str = ""
 
 
 @dataclass

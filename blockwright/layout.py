@@ -653,6 +653,9 @@ def layout_while(item, opts):
         f.exit = (0.0, exit_y) if has_break else None
         f.entry_shape = False
         return f.normalize()
+    if item.style == "hexagon":
+        d = make_shape(M.PREP, item.header, opts)
+        return _pretest_loop(d, item.body, opts, ("", ""))
     d = make_shape(M.DECISION, item.cond, opts)
     return _pretest_loop(d, item.body, opts, (opts.yes_label, opts.no_label))
 
