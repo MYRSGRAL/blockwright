@@ -7,6 +7,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  telegram-bot:
+    name: Telegram-бот · Go
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telegram-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: telegram-bot/go.mod
+          cache: false
+      - name: Проверить форматирование
+        run: test -z "$(gofmt -l *.go)"
+      - name: Проверить код и гонки данных
+        run: |
+          go vet ./...
+          go test -race ./...
+
   build-charts:
     name: ${{ matrix.os }} · Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}

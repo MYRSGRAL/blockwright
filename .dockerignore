@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!LICENSE
+!blockwright/
+!blockwright/**
+!telegram-bot/
+!telegram-bot/**
+**/__pycache__
+**/*.pyc
+**/.env*
+**/*_test.go

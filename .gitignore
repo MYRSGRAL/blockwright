@@ -24,3 +24,9 @@ outputs/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Локальные секреты и бинарники Telegram-бота
+.env
+.env.*
+/telegram-bot/blockwright-telegram
+/telegram-bot/*.test
