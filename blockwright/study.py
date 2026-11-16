@@ -1439,6 +1439,7 @@ class StudyBuilder(Builder):
             if index in input_plan.groups:
                 group = input_plan.groups[index]
                 out.append(M.Simple(M.INPUT, group.text))
+                out.extend(group.actions)
                 output_values = None
                 index = group.end
                 continue

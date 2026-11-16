@@ -15,6 +15,7 @@ class InputGroup:
     stream: str = ""
     scratch: str = ""
     index: str = ""
+    actions: list[M.Simple] = field(default_factory=list)
 
 
 @dataclass
@@ -628,6 +629,15 @@ class _Recognizer:
             and self.b.raw(d.child_by_field_name("declarator")) == name
             for d in node.children_by_field_name("declarator")
         )
+
+    def character_line_candidate(self, position: int) -> InputGroup | None:
+        from .character_study import line_protocol
+
+        match = line_protocol(self, position)
+        if match is None:
+            return None
+        end, name, actions = match
+        return InputGroup(end, "Ввод " + name, actions=actions)
 
     def character_candidate(self, position: int) -> InputGroup | None:
         node = self.nodes[position]
@@ -1850,6 +1860,7 @@ def collect_input_groups(builder: Any, block: Any, nodes: list[Any]) -> InputPla
         group = retry or (
             recognizer.candidate(position)
             or recognizer.ranked_candidate(position)
+            or recognizer.character_line_candidate(position)
             or recognizer.character_candidate(position)
             or recognizer.direct(position)
             or recognizer.text_candidate(position)
