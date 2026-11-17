@@ -41,6 +41,41 @@ int main() {
 
 
 class CharacterLine(unittest.TestCase):
+    def test_inline_length_before_splitting(self) -> None:
+        code = """
+        int main() {
+            wchar_t text[1001];
+            const wchar_t* words[501];
+            wcout << L"Введите текст: ";
+            if (!wcin.getline(text, 1001)) {
+                wcout << L"Ошибка чтения" << endl;
+                return 1;
+            }
+            int length = wcin.gcount() - !wcin.eof();
+            int count = splitWords(text, length, words);
+            wcout << count;
+        }
+        """
+        items = build(code).items
+        start = items.index(M.Simple(M.INPUT, "Ввод text"))
+        self.assertEqual(items[start + 1], M.Simple(M.PROCESS, "length = длина text"))
+        self.assertIn("splitWords(text, length, words)", items[start + 2].text)
+        for options in ({"checks": "show"}, {"study": False}):
+            self.assertTrue(
+                any(
+                    isinstance(item, M.If) and "getline" in item.cond
+                    for item in walk(build(code, **options))
+                )
+            )
+        for unsafe in (
+            code.replace("text[1001]", "text[10]"),
+            code.replace("text[1001]", "text[01001]"),
+            code.replace("int length", "unsigned char length"),
+            code.replace("wcin.eof()", "other.eof()"),
+            code.replace('wcout << L"Ошибка', 'audit(); wcout << L"Ошибка'),
+        ):
+            self.assertNotIn(M.Simple(M.INPUT, "Ввод text"), build(unsafe).items)
+
     def test_line_protocol_is_compact_but_algorithm_is_preserved(self) -> None:
         body = build(CODE)
         self.assertIn(M.Simple(M.INPUT, "Ввод text"), body.items)

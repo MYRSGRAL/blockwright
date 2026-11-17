@@ -9,9 +9,9 @@ def line_protocol(r: Any, position: int) -> tuple[int, str, list[M.Simple]] | No
     """Сворачиваем только цельный известный протокол без посторонних эффектов."""
     b = r.b
     nodes = r.nodes[position : position + 4]
-    if len(nodes) != 4 or not all(r.macro_free(node) for node in nodes):
+    if len(nodes) < 2 or not all(r.macro_free(node) for node in nodes[:2]):
         return None
-    read, length, correction, loop = nodes
+    read, length = nodes[:2]
     if read.type != "if_statement" or not r.error_exit(read, set(), numeric_exit=True):
         return None
     call = r.negated(r.condition(read))
@@ -38,6 +38,56 @@ def line_protocol(r: Any, position: int) -> tuple[int, str, list[M.Simple]] | No
         for child in r.walk(node)
     ):
         return None
+    capacity = b.raw(args[1])
+    if len(capacity) > 5 or not capacity.isdecimal() or not 1 <= int(capacity) <= 32767:
+        return None
+
+    if length.type == "declaration":
+        declarators = length.children_by_field_name("declarator")
+        if (
+            b.raw(length.child_by_field_name("type")) != "int"
+            or len(length.named_children) != 2
+            or len(declarators) != 1
+            or declarators[0].type != "init_declarator"
+        ):
+            return None
+        target = declarators[0].child_by_field_name("declarator")
+        value = b._unwrap(declarators[0].child_by_field_name("value"))
+        if target is None or target.type != "identifier" or b.op_of(value) != "-":
+            return None
+        count, correction = b.sides(value)
+        if (
+            r.member(count, stream, "gcount") != []
+            or r.member(r.negated(correction), stream, "eof") != []
+        ):
+            return None
+        buffer = r.declarations[name][1]
+        size = next(
+            (
+                b.raw(decl.child_by_field_name("size"))
+                for decl in buffer.children_by_field_name("declarator")
+                if decl.type == "array_declarator"
+                and b.raw(decl.child_by_field_name("declarator")) == name
+            ),
+            "",
+        )
+        if (
+            capacity.startswith("0")
+            or size.startswith("0")
+            or len(size) > 10
+            or not size.isdecimal()
+            or int(size) < int(capacity)
+        ):
+            return None
+        return (
+            position + 2,
+            name,
+            [M.Simple(M.PROCESS, f"{b.raw(target)} = длина {name}")],
+        )
+
+    if len(nodes) != 4 or not all(r.macro_free(node) for node in nodes[2:]):
+        return None
+    correction, loop = nodes[2:]
     assignment = b._expr(length)
     if (
         assignment is None
@@ -53,13 +103,10 @@ def line_protocol(r: Any, position: int) -> tuple[int, str, list[M.Simple]] | No
         return None
     count = b.raw(target)
     declaration = r.declarations.get(count)
-    capacity = b.raw(args[1])
     # Сужение gcount() меняет длину и границы обработки строки.
     if (
         declaration is None
         or b.raw(declaration[1].child_by_field_name("type")) != "int"
-        or not capacity.isdecimal()
-        or not 1 <= int(capacity) <= 32767
     ):
         return None
     if (
