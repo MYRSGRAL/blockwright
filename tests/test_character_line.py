@@ -58,7 +58,10 @@ class CharacterLine(unittest.TestCase):
         """
         items = build(code).items
         start = items.index(M.Simple(M.INPUT, "Ввод text"))
-        self.assertEqual(items[start + 1], M.Simple(M.PROCESS, "length = длина text"))
+        self.assertEqual(
+            items[start + 1],
+            M.Simple(M.PROCESS, "length = wcin.gcount() - !wcin.eof()"),
+        )
         self.assertIn("splitWords(text, length, words)", items[start + 2].text)
         for options in ({"checks": "show"}, {"study": False}):
             self.assertTrue(

@@ -82,7 +82,7 @@ def line_protocol(r: Any, position: int) -> tuple[int, str, list[M.Simple]] | No
         return (
             position + 2,
             name,
-            [M.Simple(M.PROCESS, f"{b.raw(target)} = длина {name}")],
+            [M.Simple(M.PROCESS, f"{b.raw(target)} = {b.raw(value)}")],
         )
 
     if len(nodes) != 4 or not all(r.macro_free(node) for node in nodes[2:]):
